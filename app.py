@@ -105,50 +105,52 @@ def get_data_summary(df):
 
     column_details_for_table.append(["Column Name", "Data Type", "Missing %", "Stats Summary"]) # Table Header
 
+    # Add a general heading for column details in the text summary
     summary_text.append("Column Details:\n")
+
     for col in df.columns:
         dtype = df[col].dtype
         missing_percent = df[col].isnull().sum() / len(df) * 100
         
-        col_summary_text = []
+        col_summary_text_parts = []
         col_table_summary = ""
 
-        col_summary_text.append(f"  - Column '{col}':")
-        col_summary_text.append(f"    - Data Type: {dtype}")
-        col_summary_text.append(f"    - Missing Values: {missing_percent:.2f}%")
+        # For text summary
+        col_summary_text_parts.append(f"  - Column '{col}':")
+        col_summary_text_parts.append(f"    - Data Type: {dtype}")
+        col_summary_text_parts.append(f"    - Missing Values: {missing_percent:.2f}%")
 
         if pd.api.types.is_numeric_dtype(df[col]):
             desc = df[col].describe()
-            col_summary_text.append(f"    - Numerical Stats:")
-            col_summary_text.append(f"      - Mean: {desc['mean']:.2f}")
-            col_summary_text.append(f"      - Median: {df[col].median():.2f}")
-            col_summary_text.append(f"      - Std Dev: {desc['std']:.2f}")
-            col_summary_text.append(f"      - Min: {desc['min']:.2f}")
-            col_summary_text.append(f"      - Max: {desc['max']:.2f}")
-            col_summary_text.append(f"      - 25th Percentile: {desc['25%']:.2f}")
-            col_summary_text.append(f"      - 75th Percentile: {desc['75%']:.2f}")
-            col_summary_text.append(f"      - Skewness: {df[col].skew():.2f}")
-            col_summary_text.append(f"      - Kurtosis: {df[col].kurt():.2f}")
-            col_table_summary = f"Mean: {desc['mean']:.2f}, Median: {df[col].median():.2f}, Missing: {missing_percent:.2f}%"
+            col_summary_text_parts.append(f"    - Numerical Stats:")
+            col_summary_text_parts.append(f"      - Mean: {desc['mean']:.2f}")
+            col_summary_text_parts.append(f"      - Median: {df[col].median():.2f}")
+            col_summary_text_parts.append(f"      - Std Dev: {desc['std']:.2f}")
+            col_summary_text_parts.append(f"      - Min: {desc['min']:.2f}")
+            col_summary_text_parts.append(f"      - Max: {desc['max']:.2f}")
+            col_summary_text_parts.append(f"      - 25th Percentile: {desc['25%']:.2f}")
+            col_summary_text_parts.append(f"      - 75th Percentile: {desc['75%']:.2f}")
+            col_summary_text_parts.append(f"      - Skewness: {df[col].skew():.2f}")
+            col_summary_text_parts.append(f"      - Kurtosis: {df[col].kurt():.2f}")
+            col_table_summary = f"Mean: {desc['mean']:.2f}, Median: {df[col].median():.2f}, Skew: {df[col].skew():.2f}"
         elif pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
             unique_count = df[col].nunique()
             top_values = df[col].value_counts().head(3) # Limit to top 3 for table summary
-            col_summary_text.append(f"    - Categorical Stats:")
-            col_summary_text.append(f"      - Unique Values (Cardinality): {unique_count}")
+            col_summary_text_parts.append(f"    - Categorical Stats:")
+            col_summary_text_parts.append(f"      - Unique Values (Cardinality): {unique_count}")
             if not top_values.empty:
-                col_summary_text.append(f"      - Top 3 Values and Counts:")
                 top_vals_str = ", ".join([f"'{val}': {count}" for val, count in top_values.items()])
-                col_summary_text.append(f"        - {top_vals_str}")
-                col_table_summary = f"Unique: {unique_count}, Top: {top_vals_str}, Missing: {missing_percent:.2f}%"
+                col_summary_text_parts.append(f"      - Top 3 Values and Counts: {top_vals_str}")
+                col_table_summary = f"Unique: {unique_count}, Top: {top_vals_str}"
             else:
-                col_table_summary = f"Unique: {unique_count}, Missing: {missing_percent:.2f}%"
+                col_table_summary = f"Unique: {unique_count}"
         elif pd.api.types.is_datetime64_any_dtype(df[col]):
-            col_summary_text.append(f"    - Date/Time Stats:")
-            col_summary_text.append(f"      - Min Date: {df[col].min()}")
-            col_summary_text.append(f"      - Max Date: {df[col].max()}")
-            col_table_summary = f"Min Date: {df[col].min().strftime('%Y-%m-%d')}, Max Date: {df[col].max().strftime('%Y-%m-%d')}, Missing: {missing_percent:.2f}%"
+            col_summary_text_parts.append(f"    - Date/Time Stats:")
+            col_summary_text_parts.append(f"      - Min Date: {df[col].min()}")
+            col_summary_text_parts.append(f"      - Max Date: {df[col].max()}")
+            col_table_summary = f"Min Date: {df[col].min().strftime('%Y-%m-%d')}, Max Date: {df[col].max().strftime('%Y-%m-%d')}"
         
-        summary_text.append("\n".join(col_summary_text))
+        summary_text.append("\n".join(col_summary_text_parts))
         summary_text.append("") # Add a blank line for readability between columns in text summary
         column_details_for_table.append([col, str(dtype), f"{missing_percent:.2f}%", col_table_summary])
 
@@ -163,7 +165,7 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT provide Python code snippets in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph."},
+                {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT provide Python code snippets in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
                 *st.session_state.messages, # Include full conversation history
                 {"role": "user", "content": prompt}
             ],
@@ -204,7 +206,9 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
         content = item.get("content")
 
         if item_type == "heading":
-            document.add_heading(content, level=item.get("level", 2))
+            heading = document.add_heading('', level=item.get("level", 2))
+            run = heading.add_run(content)
+            run.bold = True # Ensure headings are bold
         elif item_type == "text":
             document.add_paragraph(content)
         elif item_type == "table":
@@ -212,7 +216,11 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
             rows = item.get("rows", [])
             
             if headers and rows:
-                document.add_heading("Column Details", level=3) # Specific heading for the table
+                # Add a specific sub-heading for the table
+                table_heading = document.add_heading('', level=3)
+                run = table_heading.add_run("Column Details Overview")
+                run.bold = True
+
                 table = document.add_table(rows=1, cols=len(headers))
                 table.style = 'Table Grid' # Apply a basic table style
 
@@ -236,7 +244,9 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                 document.add_picture(content, width=Inches(6)) # Adjust width as needed
                 last_paragraph = document.paragraphs[-1]
                 last_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                document.add_paragraph(item.get("caption", "")) # Add caption if available
+                caption = item.get("caption", "")
+                if caption:
+                    document.add_paragraph(caption, style='Caption') # Add caption style if available
             except Exception as e:
                 document.add_paragraph(f"Error adding image to report: {e}")
         
@@ -258,7 +268,8 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
 def generate_and_display_graph(df, graph_type, columns):
     """
     Generates and displays a graph based on user request.
-    Returns a description of the generated graph for AI interpretation.
+    Returns a tuple: (BytesIO object of plot, description of the plot for AI interpretation).
+    Returns (None, error_message) if generation fails.
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     graph_description = ""
@@ -272,8 +283,8 @@ def generate_and_display_graph(df, graph_type, columns):
                 ax.set_ylabel("Frequency")
                 graph_description = f"A histogram for the '{columns[0]}' column was generated. It shows the distribution of values for this numerical feature."
             else:
-                st.warning("Please specify a single numerical column for a histogram.")
-                return None, "The requested histogram could not be generated. Please ensure you specify one numerical column."
+                plt.close(fig) # Close figure if not used
+                return None, "Please specify a single numerical column for a histogram."
 
         elif graph_type == "boxplot":
             if len(columns) == 1 and pd.api.types.is_numeric_dtype(df[columns[0]]):
@@ -282,8 +293,8 @@ def generate_and_display_graph(df, graph_type, columns):
                 ax.set_ylabel(columns[0])
                 graph_description = f"A box plot for the '{columns[0]}' column was generated. It visualizes the distribution, median, quartiles, and potential outliers of this numerical feature."
             else:
-                st.warning("Please specify a single numerical column for a box plot.")
-                return None, "The requested box plot could not be generated. Please ensure you specify one numerical column."
+                plt.close(fig)
+                return None, "Please specify a single numerical column for a box plot."
 
         elif graph_type == "scatterplot":
             if len(columns) == 2 and pd.api.types.is_numeric_dtype(df[columns[0]]) and pd.api.types.is_numeric_dtype(df[columns[1]]):
@@ -293,8 +304,8 @@ def generate_and_display_graph(df, graph_type, columns):
                 ax.set_ylabel(columns[1])
                 graph_description = f"A scatter plot showing the relationship between '{columns[0]}' and '{columns[1]}' was generated. It helps visualize correlations or patterns between these two numerical features."
             else:
-                st.warning("Please specify two numerical columns for a scatter plot.")
-                return None, "The requested scatter plot could not be generated. Please ensure you specify two numerical columns."
+                plt.close(fig)
+                return None, "Please specify two numerical columns for a scatter plot."
 
         elif graph_type == "correlation_heatmap":
             numerical_cols = df.select_dtypes(include=['number']).columns
@@ -304,12 +315,15 @@ def generate_and_display_graph(df, graph_type, columns):
                 ax.set_title("Correlation Heatmap of Numerical Features")
                 graph_description = "A correlation heatmap of all numerical features was generated. It displays the pairwise correlation coefficients, indicating the strength and direction of linear relationships between variables."
             else:
-                st.warning("No numerical columns found to generate a correlation heatmap.")
-                return None, "The correlation heatmap could not be generated as no numerical columns were found."
+                plt.close(fig)
+                return None, "No numerical columns found to generate a correlation heatmap."
         
         elif graph_type == "bar_chart":
             if len(columns) == 1 and (pd.api.types.is_object_dtype(df[columns[0]]) or pd.api.types.is_string_dtype(df[columns[0]]) or pd.api.types.is_categorical_dtype(df[columns[0]])):
                 value_counts = df[columns[0]].value_counts().head(10) # Limit to top 10 categories
+                if value_counts.empty:
+                    plt.close(fig)
+                    return None, f"No data found for bar chart in column '{columns[0]}'."
                 sns.barplot(x=value_counts.index, y=value_counts.values, ax=ax)
                 ax.set_title(f"Bar Chart of Top Categories in {columns[0]}")
                 ax.set_xlabel(columns[0])
@@ -318,26 +332,26 @@ def generate_and_display_graph(df, graph_type, columns):
                 plt.tight_layout()
                 graph_description = f"A bar chart showing the frequency of top categories in '{columns[0]}' was generated. It helps visualize the distribution of categorical values."
             else:
-                st.warning("Please specify a single categorical column for a bar chart.")
-                return None, "The requested bar chart could not be generated. Please ensure you specify one categorical column."
+                plt.close(fig)
+                return None, "Please specify a single categorical column for a bar chart."
 
         else:
-            st.warning("Unsupported graph type requested.")
-            return None, "The requested graph type is not supported. Please ask for a histogram, box plot, scatter plot, correlation heatmap, or bar chart."
+            plt.close(fig)
+            return None, "Unsupported graph type requested. Please ask for a histogram, box plot, scatter plot, correlation heatmap, or bar chart."
 
         st.pyplot(fig) # Display the plot in Streamlit
 
         # Save plot to BytesIO for report
         img_buffer = io.BytesIO()
         fig.savefig(img_buffer, format='png', bbox_inches='tight')
-        img_buffer.seek(0)
+        img_buffer.seek(0) # Rewind the buffer to the beginning
         plt.close(fig) # Close the plot to free up memory
         return img_buffer, graph_description
 
     except Exception as e:
         st.error(f"Error generating graph: {e}")
         plt.close(fig) # Ensure figure is closed even on error
-        return None, f"An error occurred while generating the graph: {e}"
+        return None, f"An error occurred while generating the graph: {e}. Please check column names and data types."
 
 # --- Main Application Logic ---
 def main_app():
@@ -378,7 +392,13 @@ def main_app():
 
                 # Add dataset overview to report content
                 st.session_state['report_content'].append({"type": "heading", "level": 2, "content": "Dataset Overview"})
-                st.session_state['report_content'].append({"type": "text", "content": summary_text.split("Column Details:")[0]}) # Overview text
+                # Split the text summary to only include the general overview, not column details
+                overview_text_end_index = summary_text.find("Column Details:")
+                if overview_text_end_index != -1:
+                    overview_text = summary_text[:overview_text_end_index].strip()
+                else:
+                    overview_text = summary_text.strip()
+                st.session_state['report_content'].append({"type": "text", "content": overview_text})
                 st.session_state['report_content'].append({"type": "table", "headers": summary_table[0], "rows": summary_table[1:]}) # Column details table
 
                 # Initial prompt to OpenAI with data summary
@@ -420,37 +440,33 @@ def main_app():
 
             # Simple intent parsing for graph requests
             prompt_lower = prompt.lower()
-            if "histogram" in prompt_lower:
-                graph_type = "histogram"
-                match = re.search(r"histogram of (?:the )?'?([a-zA-Z0-9_ ]+)'?", prompt_lower)
-                if match:
-                    col_name = match.group(1).strip()
-                    if col_name in st.session_state['df'].columns:
-                        columns_for_graph = [col_name]
-            elif "box plot" in prompt_lower or "boxplot" in prompt_lower:
-                graph_type = "boxplot"
-                match = re.search(r"(?:box plot|boxplot) of (?:the )?'?([a-zA-Z0-9_ ]+)'?", prompt_lower)
-                if match:
-                    col_name = match.group(1).strip()
-                    if col_name in st.session_state['df'].columns:
-                        columns_for_graph = [col_name]
+            
+            # Regex for single column graphs (histogram, boxplot, bar chart)
+            single_col_match = re.search(r"(?:histogram|hist|bar chart|barplot|box plot|boxplot)\s+of\s+(?:the\s+)?['\"]?([a-zA-Z0-9_ ]+)['\"]?", prompt_lower)
+            if single_col_match:
+                col_name = single_col_match.group(1).strip()
+                if col_name in st.session_state['df'].columns:
+                    columns_for_graph = [col_name]
+                    if "histogram" in prompt_lower or "hist" in prompt_lower:
+                        graph_type = "histogram"
+                    elif "box plot" in prompt_lower or "boxplot" in prompt_lower:
+                        graph_type = "boxplot"
+                    elif "bar chart" in prompt_lower or "barplot" in prompt_lower:
+                        graph_type = "bar_chart"
+            
+            # Regex for scatter plot
             elif "scatter plot" in prompt_lower:
-                graph_type = "scatterplot"
-                match = re.search(r"scatter plot of (?:the )?'?([a-zA-Z0-9_ ]+)'? vs (?:the )?'?([a-zA-Z0-9_ ]+)'?", prompt_lower)
-                if match:
-                    col1 = match.group(1).strip()
-                    col2 = match.group(2).strip()
+                scatter_match = re.search(r"scatter plot of (?:the )?'?([a-zA-Z0-9_ ]+)'? vs (?:the )?'?([a-zA-Z0-9_ ]+)'?", prompt_lower)
+                if scatter_match:
+                    col1 = scatter_match.group(1).strip()
+                    col2 = scatter_match.group(2).strip()
                     if col1 in st.session_state['df'].columns and col2 in st.session_state['df'].columns:
                         columns_for_graph = [col1, col2]
+                        graph_type = "scatterplot"
+            
+            # Keyword for correlation heatmap
             elif "correlation heatmap" in prompt_lower or "heatmap" in prompt_lower:
                 graph_type = "correlation_heatmap"
-            elif "bar chart" in prompt_lower or "barplot" in prompt_lower:
-                graph_type = "bar_chart"
-                match = re.search(r"(?:bar chart|barplot) of (?:the )?'?([a-zA-Z0-9_ ]+)'?", prompt_lower)
-                if match:
-                    col_name = match.group(1).strip()
-                    if col_name in st.session_state['df'].columns:
-                        columns_for_graph = [col_name]
 
             if graph_type and (graph_type == "correlation_heatmap" or columns_for_graph):
                 with st.spinner(f"Generating {graph_type.replace('_', ' ')}..."):
@@ -481,6 +497,7 @@ def main_app():
                     st.session_state['user_goal'] = prompt # Simple capture for now
                     st.session_state.report_content.append({"type": "heading", "level": 2, "content": "User's Stated Goal"})
                     st.session_state.report_content.append({"type": "text", "content": prompt})
+
 
                 # Construct prompt for OpenAI, including data summary and full chat history
                 full_prompt = (
