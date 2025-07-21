@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import os
 from openai import OpenAI
+from openai import AuthenticationError, APIConnectionError, RateLimitError # Import specific OpenAI errors
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -31,8 +32,8 @@ except KeyError as e:
     st.error(f"Secret not found: {e}. Please ensure your .streamlit/secrets.toml file is correctly configured with [openai] and [credentials] sections.")
     st.stop() # Stop the app if secrets are missing
 
-# Initialize OpenAI client
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Initialize OpenAI client (will be initialized after API key check)
+client = None 
 
 # --- Session State Initialization ---
 # Initialize session state variables if they don't exist
@@ -54,6 +55,8 @@ if 'user_goal' not in st.session_state:
     st.session_state['user_goal'] = "Not specified"
 if 'uploaded_file_name' not in st.session_state: # To track if a new file is uploaded
     st.session_state['uploaded_file_name'] = None
+if 'openai_client_initialized' not in st.session_state:
+    st.session_state['openai_client_initialized'] = False
 
 # --- Helper Functions ---
 
@@ -87,6 +90,44 @@ def check_password():
             else:
                 st.error("Invalid username or password.")
     return False
+
+def check_openai_api_key():
+    """
+    Attempts a simple OpenAI API call to verify the API key.
+    Returns True if successful, False otherwise.
+    """
+    global client # Use the global client variable
+
+    if st.session_state['openai_client_initialized']:
+        return True # Already checked and initialized
+
+    try:
+        # Initialize client here for the check
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        # Attempt a simple call to verify the key
+        # Using chat completions with a very small prompt and max_tokens
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=5,
+            stream=False # Do not stream for this check
+        )
+        st.session_state['openai_client_initialized'] = True
+        st.success("OpenAI API key verified successfully!")
+        return True
+    except AuthenticationError:
+        st.error("OpenAI API Key is invalid. Please check your .streamlit/secrets.toml file.")
+        return False
+    except APIConnectionError as e:
+        st.error(f"Could not connect to OpenAI API: {e}. Please check your internet connection.")
+        return False
+    except RateLimitError:
+        st.error("OpenAI API rate limit exceeded. Please try again later or check your OpenAI usage.")
+        return False
+    except Exception as e:
+        st.error(f"An unexpected error occurred while checking OpenAI API key: {e}")
+        return False
+
 
 def get_data_summary(df):
     """
@@ -165,6 +206,11 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
     Sends a prompt to the OpenAI API and returns the response.
     Explicitly instructs the model NOT to provide Python code snippets or markdown formatting.
     """
+    global client # Use the global client variable
+
+    if not st.session_state['openai_client_initialized']:
+        return "AI is not initialized. Please check your OpenAI API key and internet connection."
+
     try:
         response = client.chat.completions.create(
             model=model,
@@ -180,9 +226,19 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
             presence_penalty=0.0
         )
         return response.choices[0].message.content
+    except AuthenticationError:
+        st.error("OpenAI API Key is invalid during chat. Please check your .streamlit/secrets.toml file.")
+        return "I'm sorry, my connection to the AI failed due to an invalid API key. Please contact support."
+    except APIConnectionError as e:
+        st.error(f"Could not connect to OpenAI API during chat: {e}. Please check your internet connection.")
+        return "I'm sorry, I'm having trouble connecting to the AI. Please check your internet connection and try again."
+    except RateLimitError:
+        st.error("OpenAI API rate limit exceeded during chat. Please try again later or check your OpenAI usage.")
+        return "I'm sorry, the AI is experiencing high demand. Please try again in a moment."
     except Exception as e:
-        st.error(f"Error communicating with OpenAI API: {e}")
-        return "I'm sorry, I'm having trouble connecting to the AI. Please try again later."
+        st.error(f"An unexpected error occurred during AI response generation: {e}")
+        return "I'm sorry, an unexpected error occurred while generating the AI response. Please try again later."
+
 
 def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
     """
@@ -214,40 +270,38 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
             run = heading.add_run(content)
             run.bold = True # Ensure headings are bold
         elif item_type == "text":
-            # Process markdown bolding within text content
+            # Process text to bold numbered list items and markdown bolding
             lines = content.split('\n')
             for line in lines:
                 p = document.add_paragraph()
-                # Regex to find bolded parts (e.g., **text**) or numbered list items (e.g., 1. Text)
-                # This pattern looks for:
+                # Pattern to capture:
                 # 1. Start of line with a digit and a dot (e.g., "1. ")
                 # 2. Text enclosed in double asterisks (e.g., **bold text**)
-                # It splits the line by these patterns, keeping the delimiters.
-                parts = re.split(r'((^\d+\.\s+)|(\*\*.*?\*\*))', line)
+                # Split by these, keeping the delimiters.
+                parts = re.split(r'(^\d+\.\s+)|(\*\*.*?\*\*)', line)
                 
                 for part in parts:
                     if part is None or part == '':
                         continue # Skip empty parts from split
 
-                    if part.startswith('**') and part.endswith('**'):
+                    if re.match(r'^\d+\.\s+', part):
+                        # This is a numbered list prefix like "1. ", "2. "
+                        # Find the first significant word/phrase after the number for bolding
+                        remaining_text = line[line.find(part) + len(part):]
+                        bold_match = re.match(r'([^:\.\n]*)(.*)', remaining_text) # Capture up to colon/period/newline
+                        
+                        p.add_run(part) # Add "1. " as normal
+                        if bold_match and bold_match.group(1).strip():
+                            run = p.add_run(bold_match.group(1).strip())
+                            run.bold = True
+                            p.add_run(bold_match.group(2)) # Add the rest of the line
+                        else:
+                            p.add_run(remaining_text) # Fallback if no boldable phrase found
+                        break # Processed this line, move to next
+                    elif part.startswith('**') and part.endswith('**'):
                         # This is a markdown bolded part
                         run = p.add_run(part[2:-2])
                         run.bold = True
-                    elif re.match(r'^\d+\.\s+', part):
-                        # This is the start of a numbered list item
-                        # Find the end of the initial boldable phrase (e.g., up to first colon or end of line)
-                        match_num = re.match(r'(\d+\.\s+)(.*?)(:|\.|\s|$)', part)
-                        if match_num:
-                            num_prefix = match_num.group(1)
-                            bold_text = match_num.group(2).strip()
-                            rest_of_line = part[len(num_prefix) + len(match_num.group(2)):]
-
-                            p.add_run(num_prefix) # Add the "1. " part as normal
-                            run = p.add_run(bold_text) # Add the main phrase as bold
-                            run.bold = True
-                            p.add_run(rest_of_line) # Add the rest of the line as normal
-                        else:
-                            p.add_run(part) # Fallback if regex doesn't capture well
                     else:
                         # This is plain text
                         p.add_run(part)
@@ -337,12 +391,19 @@ def generate_and_display_graph(df, graph_type, columns):
                 return None, "Please specify a single numerical column for a box plot."
 
         elif graph_type == "scatterplot":
-            if len(columns) == 2 and pd.api.types.is_numeric_dtype(df[columns[0]]) and pd.api.types.is_numeric_dtype(df[columns[1]]):
-                sns.scatterplot(x=df[columns[0]], y=df[columns[1]], ax=ax)
-                ax.set_title(f"Scatter Plot of {columns[0]} vs {columns[1]}")
-                ax.set_xlabel(columns[0])
-                ax.set_ylabel(columns[1])
-                graph_description = f"A scatter plot showing the relationship between '{columns[0]}' and '{columns[1]}' was generated. It helps visualize correlations or patterns between these two numerical features."
+            if len(columns) == 2:
+                col1_is_numeric = pd.api.types.is_numeric_dtype(df[columns[0]])
+                col2_is_numeric = pd.api.types.is_numeric_dtype(df[columns[1]])
+                if col1_is_numeric and col2_is_numeric:
+                    sns.scatterplot(x=df[columns[0]], y=df[columns[1]], ax=ax)
+                    ax.set_title(f"Scatter Plot of {columns[0]} vs {columns[1]}")
+                    ax.set_xlabel(columns[0])
+                    ax.set_ylabel(columns[1])
+                    graph_description = f"A scatter plot showing the relationship between '{columns[0]}' and '{columns[1]}' was generated. It helps visualize correlations or patterns between these two numerical features."
+                else:
+                    plt.close(fig)
+                    non_numeric_cols = [col for col, is_num in zip(columns, [col1_is_numeric, col2_is_numeric]) if not is_num]
+                    return None, f"For a scatter plot, both selected columns must be numerical. The following are not numerical: {', '.join(non_numeric_cols)}."
             else:
                 plt.close(fig)
                 return None, "Please specify two numerical columns for a scatter plot."
@@ -400,6 +461,12 @@ def main_app():
     st.title("Data Preprocessing Assistant")
     st.write(f"Welcome, {st.session_state.get('current_username', 'User')}!")
 
+    # --- OpenAI API Key Check ---
+    # Perform this check once after login
+    if not st.session_state['openai_client_initialized']:
+        with st.spinner("Verifying OpenAI API key..."):
+            if not check_openai_api_key():
+                st.stop() # Stop the app if API key is invalid or connection fails
 
     st.sidebar.header("Upload Dataset")
     uploaded_file = st.sidebar.file_uploader("Choose a CSV or Excel file", type=["csv", "xlsx"])
@@ -464,7 +531,8 @@ def main_app():
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 if message["role"] == "graph" and "content" in message:
-                    st.image(message["content"], caption=message.get("caption", ""), use_column_width=True)
+                    # Fix: Changed use_column_width to use_container_width
+                    st.image(message["content"], caption=message.get("caption", ""), use_container_width=True)
                 else:
                     st.markdown(message["content"])
 
@@ -538,8 +606,9 @@ def main_app():
         convertible_percentage_cols = []
         if st.session_state['df'] is not None:
             for col in st.session_state['df'].columns:
+                # Check if it's an object/string type and if any non-null value contains '%'
                 if (pd.api.types.is_object_dtype(st.session_state['df'][col]) or pd.api.types.is_string_dtype(st.session_state['df'][col])) and \
-                   st.session_state['df'][col].astype(str).str.contains('%').any():
+                   st.session_state['df'][col].astype(str).str.contains('%', na=False).any():
                     convertible_percentage_cols.append(col)
         
         if convertible_percentage_cols:
@@ -554,7 +623,13 @@ def main_app():
                     
                     try:
                         # Remove '%' and convert to numeric
-                        df_copy[selected_convert_col] = df_copy[selected_convert_col].astype(str).str.replace('%', '').astype(float)
+                        # Using errors='coerce' to turn unconvertible values into NaN
+                        df_copy[selected_convert_col] = df_copy[selected_convert_col].astype(str).str.replace('%', '').astype(float, errors='coerce')
+                        
+                        # Handle potential NaNs introduced by coerce (optional, but good practice)
+                        if df_copy[selected_convert_col].isnull().any():
+                            st.warning(f"Some values in '{selected_convert_col}' could not be converted to numeric and were set to NaN.")
+                        
                         st.session_state['df'] = df_copy # Update the DataFrame in session state
 
                         # Regenerate summary as data types have changed
@@ -650,6 +725,7 @@ def main_app():
         st.session_state['user_goal'] = "Not specified"
         if 'uploaded_file_name' in st.session_state:
             del st.session_state['uploaded_file_name']
+        st.session_state['openai_client_initialized'] = False # Reset OpenAI client status on logout
         st.rerun()
 
 # --- Run the App ---
