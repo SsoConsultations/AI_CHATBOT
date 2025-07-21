@@ -7,8 +7,6 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_SECTION_START
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
 import matplotlib.pyplot as plt
 import seaborn as sns
 import re # For parsing graph requests and markdown bolding
@@ -132,7 +130,10 @@ def get_data_summary(df):
             col_summary_text_parts.append(f"      - 75th Percentile: {desc['75%']:.2f}")
             col_summary_text_parts.append(f"      - Skewness: {df[col].skew():.2f}")
             col_summary_text_parts.append(f"      - Kurtosis: {df[col].kurt():.2f}")
-            col_table_summary = f"Mean: {desc['mean']:.2f}, Median: {df[col].median():.2f}, Skew: {df[col].skew():.2f}"
+            col_table_summary = (
+                f"Mean: {desc['mean']:.2f}, Median: {df[col].median():.2f}, "
+                f"Skew: {df[col].skew():.2f}, Missing: {missing_percent:.2f}%"
+            )
         elif pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
             unique_count = df[col].nunique()
             top_values = df[col].value_counts().head(3) # Limit to top 3 for table summary
@@ -141,14 +142,17 @@ def get_data_summary(df):
             if not top_values.empty:
                 top_vals_str = ", ".join([f"'{val}': {count}" for val, count in top_values.items()])
                 col_summary_text_parts.append(f"      - Top 3 Values and Counts: {top_vals_str}")
-                col_table_summary = f"Unique: {unique_count}, Top: {top_vals_str}"
+                col_table_summary = f"Unique: {unique_count}, Top: {top_vals_str}, Missing: {missing_percent:.2f}%"
             else:
-                col_table_summary = f"Unique: {unique_count}"
+                col_table_summary = f"Unique: {unique_count}, Missing: {missing_percent:.2f}%"
         elif pd.api.types.is_datetime64_any_dtype(df[col]):
             col_summary_text_parts.append(f"    - Date/Time Stats:")
             col_summary_text_parts.append(f"      - Min Date: {df[col].min()}")
             col_summary_text_parts.append(f"      - Max Date: {df[col].max()}")
-            col_table_summary = f"Min Date: {df[col].min().strftime('%Y-%m-%d')}, Max Date: {df[col].max().strftime('%Y-%m-%d')}"
+            col_table_summary = (
+                f"Min Date: {df[col].min().strftime('%Y-%m-%d')}, "
+                f"Max Date: {df[col].max().strftime('%Y-%m-%d')}, Missing: {missing_percent:.2f}%"
+            )
         
         summary_text.append("\n".join(col_summary_text_parts))
         summary_text.append("") # Add a blank line for readability between columns in text summary
@@ -165,7 +169,7 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT provide Python code snippets or markdown formatting like bolding or italics in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
+                {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks) in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
                 *st.session_state.messages, # Include full conversation history
                 {"role": "user", "content": prompt}
             ],
@@ -214,15 +218,36 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
             lines = content.split('\n')
             for line in lines:
                 p = document.add_paragraph()
-                # Find all bolded parts using regex
-                # This regex captures text between ** and **. The (.*?) makes it non-greedy.
-                # It also handles cases where bolding might be at the start/end or within a line.
-                parts = re.split(r'(\*\*.*?\*\*)', line)
+                # Regex to find bolded parts (e.g., **text**) or numbered list items (e.g., 1. Text)
+                # This pattern looks for:
+                # 1. Start of line with a digit and a dot (e.g., "1. ")
+                # 2. Text enclosed in double asterisks (e.g., **bold text**)
+                # It splits the line by these patterns, keeping the delimiters.
+                parts = re.split(r'((^\d+\.\s+)|(\*\*.*?\*\*))', line)
+                
                 for part in parts:
+                    if part is None or part == '':
+                        continue # Skip empty parts from split
+
                     if part.startswith('**') and part.endswith('**'):
-                        # This is a bolded part, remove asterisks
+                        # This is a markdown bolded part
                         run = p.add_run(part[2:-2])
                         run.bold = True
+                    elif re.match(r'^\d+\.\s+', part):
+                        # This is the start of a numbered list item
+                        # Find the end of the initial boldable phrase (e.g., up to first colon or end of line)
+                        match_num = re.match(r'(\d+\.\s+)(.*?)(:|\.|\s|$)', part)
+                        if match_num:
+                            num_prefix = match_num.group(1)
+                            bold_text = match_num.group(2).strip()
+                            rest_of_line = part[len(num_prefix) + len(match_num.group(2)):]
+
+                            p.add_run(num_prefix) # Add the "1. " part as normal
+                            run = p.add_run(bold_text) # Add the main phrase as bold
+                            run.bold = True
+                            p.add_run(rest_of_line) # Add the rest of the line as normal
+                        else:
+                            p.add_run(part) # Fallback if regex doesn't capture well
                     else:
                         # This is plain text
                         p.add_run(part)
@@ -472,7 +497,7 @@ def main_app():
                 columns_to_plot = [col1, col2]
         # Correlation Heatmap doesn't need column selection here, it uses all numerical
 
-        if st.sidebar.button(f"Generate {selected_graph_type}"):
+        if st.sidebar.button(f"Generate {selected_graph_type} Chart"): # Changed button label for clarity
             if selected_graph_type == "Select a graph type":
                 st.sidebar.warning("Please select a graph type.")
             elif selected_graph_type not in ["Correlation Heatmap"] and not columns_to_plot:
@@ -509,38 +534,51 @@ def main_app():
         st.sidebar.markdown("---")
         st.sidebar.header("Basic Data Operations")
 
-        if st.session_state['df'] is not None and 'Knockout Percentage' in st.session_state['df'].columns:
-            if st.sidebar.button("Convert 'Knockout Percentage' to Numeric"):
-                df_copy = st.session_state['df'].copy()
-                original_dtype = df_copy['Knockout Percentage'].dtype
+        # Find columns that look like percentages (object/string dtype, contain '%')
+        convertible_percentage_cols = []
+        if st.session_state['df'] is not None:
+            for col in st.session_state['df'].columns:
+                if (pd.api.types.is_object_dtype(st.session_state['df'][col]) or pd.api.types.is_string_dtype(st.session_state['df'][col])) and \
+                   st.session_state['df'][col].astype(str).str.contains('%').any():
+                    convertible_percentage_cols.append(col)
+        
+        if convertible_percentage_cols:
+            selected_convert_col = st.sidebar.selectbox(
+                "Select column to convert to numeric (e.g., 'XX%'):", 
+                ["Select a column"] + convertible_percentage_cols,
+                key="convert_col_select"
+            )
+            if selected_convert_col != "Select a column":
+                if st.sidebar.button(f"Convert '{selected_convert_col}' to Numeric"):
+                    df_copy = st.session_state['df'].copy()
+                    
+                    try:
+                        # Remove '%' and convert to numeric
+                        df_copy[selected_convert_col] = df_copy[selected_convert_col].astype(str).str.replace('%', '').astype(float)
+                        st.session_state['df'] = df_copy # Update the DataFrame in session state
 
-                try:
-                    # Remove '%' and convert to numeric
-                    df_copy['Knockout Percentage'] = df_copy['Knockout Percentage'].astype(str).str.replace('%', '').astype(float)
-                    st.session_state['df'] = df_copy # Update the DataFrame in session state
+                        # Regenerate summary as data types have changed
+                        summary_text, summary_table = get_data_summary(st.session_state['df'])
+                        st.session_state['data_summary_text'] = summary_text
+                        st.session_state['data_summary_table'] = summary_table
 
-                    # Regenerate summary as data types have changed
-                    summary_text, summary_table = get_data_summary(st.session_state['df'])
-                    st.session_state['data_summary_text'] = summary_text
-                    st.session_state['data_summary_table'] = summary_table
-
-                    conversion_message = (
-                        "Successfully converted 'Knockout Percentage' to numeric (float) by removing the '%' sign. "
-                        f"Its data type is now {st.session_state['df']['Knockout Percentage'].dtype}. "
-                        "This is a crucial step for using this column in regression models. "
-                        "The dataset overview has been updated to reflect this change."
-                    )
-                    st.session_state.messages.append({"role": "assistant", "content": conversion_message})
-                    st.session_state.report_content.append({"type": "heading", "level": 2, "content": "Data Operation: 'Knockout Percentage' Conversion"})
-                    st.session_state.report_content.append({"type": "text", "content": conversion_message})
-                    st.rerun()
-                except Exception as e:
-                    error_message = f"Failed to convert 'Knockout Percentage' to numeric: {e}. Please ensure the column only contains numerical values and '%'."
-                    st.session_state.messages.append({"role": "assistant", "content": error_message})
-                    st.session_state.report_content.append({"type": "text", "content": error_message})
-                    st.rerun()
+                        conversion_message = (
+                            f"Successfully converted '{selected_convert_col}' to numeric (float) by removing the '%' sign. "
+                            f"Its data type is now {st.session_state['df'][selected_convert_col].dtype}. "
+                            "This is a crucial step for using this column in regression models. "
+                            "The dataset overview has been updated to reflect this change."
+                        )
+                        st.session_state.messages.append({"role": "assistant", "content": conversion_message})
+                        st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Data Operation: '{selected_convert_col}' Conversion"})
+                        st.session_state.report_content.append({"type": "text", "content": conversion_message})
+                        st.rerun()
+                    except Exception as e:
+                        error_message = f"Failed to convert '{selected_convert_col}' to numeric: {e}. Please ensure the column only contains numerical values and '%'."
+                        st.session_state.messages.append({"role": "assistant", "content": error_message})
+                        st.session_state.report_content.append({"type": "text", "content": error_message})
+                        st.rerun()
         else:
-            st.sidebar.info("Upload data to enable data operations.")
+            st.sidebar.info("Upload data or ensure columns with '%' exist to enable data operations.")
 
 
         # Chat input box - positioned before the footer
