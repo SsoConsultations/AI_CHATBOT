@@ -2,3 +2,5 @@ streamlit
 pandas
 openai
 python-docx
+matplotlib
+seaborn
