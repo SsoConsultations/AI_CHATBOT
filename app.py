@@ -339,9 +339,7 @@ def generate_and_display_graph(df, graph_type, columns):
             plt.close(fig)
             return None, "Unsupported graph type requested. Please ask for a histogram, box plot, scatter plot, correlation heatmap, or bar chart."
 
-        st.pyplot(fig) # Display the plot in Streamlit
-
-        # Save plot to BytesIO for report
+        # Save plot to BytesIO for display and report
         img_buffer = io.BytesIO()
         fig.savefig(img_buffer, format='png', bbox_inches='tight')
         img_buffer.seek(0) # Rewind the buffer to the beginning
@@ -425,60 +423,56 @@ def main_app():
         # Display chat messages from history with different colors
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+                if message["role"] == "graph" and "content" in message:
+                    st.image(message["content"], caption=message.get("caption", ""), use_column_width=True)
+                else:
+                    st.markdown(message["content"])
 
-        # Chat input box - positioned before the footer
-        if prompt := st.chat_input("Ask about preprocessing or analysis..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+        # --- Interactive Data Exploration Controls (New Section) ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("Generate Specific Graphs")
+        
+        graph_options = ["Select a graph type", "Histogram", "Box Plot", "Scatter Plot", "Correlation Heatmap", "Bar Chart"]
+        selected_graph_type = st.sidebar.selectbox("Choose Graph Type:", graph_options, key="graph_type_select")
 
-            # --- Graph Generation Logic ---
-            graph_generated = False
-            graph_type = None
-            columns_for_graph = []
+        all_columns = st.session_state['df'].columns.tolist()
+        numerical_columns = st.session_state['df'].select_dtypes(include=['number']).columns.tolist()
+        categorical_columns = st.session_state['df'].select_dtypes(include=['object', 'category']).columns.tolist()
 
-            # Simple intent parsing for graph requests
-            prompt_lower = prompt.lower()
-            
-            # Regex for single column graphs (histogram, boxplot, bar chart)
-            single_col_match = re.search(r"(?:histogram|hist|bar chart|barplot|box plot|boxplot)\s+of\s+(?:the\s+)?['\"]?([a-zA-Z0-9_ ]+)['\"]?", prompt_lower)
-            if single_col_match:
-                col_name = single_col_match.group(1).strip()
-                if col_name in st.session_state['df'].columns:
-                    columns_for_graph = [col_name]
-                    if "histogram" in prompt_lower or "hist" in prompt_lower:
-                        graph_type = "histogram"
-                    elif "box plot" in prompt_lower or "boxplot" in prompt_lower:
-                        graph_type = "boxplot"
-                    elif "bar chart" in prompt_lower or "barplot" in prompt_lower:
-                        graph_type = "bar_chart"
-            
-            # Regex for scatter plot
-            elif "scatter plot" in prompt_lower:
-                scatter_match = re.search(r"scatter plot of (?:the )?'?([a-zA-Z0-9_ ]+)'? vs (?:the )?'?([a-zA-Z0-9_ ]+)'?", prompt_lower)
-                if scatter_match:
-                    col1 = scatter_match.group(1).strip()
-                    col2 = scatter_match.group(2).strip()
-                    if col1 in st.session_state['df'].columns and col2 in st.session_state['df'].columns:
-                        columns_for_graph = [col1, col2]
-                        graph_type = "scatterplot"
-            
-            # Keyword for correlation heatmap
-            elif "correlation heatmap" in prompt_lower or "heatmap" in prompt_lower:
-                graph_type = "correlation_heatmap"
+        columns_to_plot = []
+        if selected_graph_type in ["Histogram", "Box Plot", "Bar Chart"]:
+            col_options = numerical_columns if selected_graph_type in ["Histogram", "Box Plot"] else categorical_columns
+            selected_col = st.sidebar.selectbox(f"Select Column for {selected_graph_type}:", ["Select a column"] + col_options, key="single_col_select")
+            if selected_col != "Select a column":
+                columns_to_plot = [selected_col]
+        elif selected_graph_type == "Scatter Plot":
+            col1 = st.sidebar.selectbox("Select X-axis Column:", ["Select X"] + numerical_columns, key="scatter_x_select")
+            col2 = st.sidebar.selectbox("Select Y-axis Column:", ["Select Y"] + numerical_columns, key="scatter_y_select")
+            if col1 != "Select X" and col2 != "Select Y":
+                columns_to_plot = [col1, col2]
+        # Correlation Heatmap doesn't need column selection here, it uses all numerical
 
-            if graph_type and (graph_type == "correlation_heatmap" or columns_for_graph):
-                with st.spinner(f"Generating {graph_type.replace('_', ' ')}..."):
-                    img_buffer, graph_desc = generate_and_display_graph(st.session_state['df'], graph_type, columns_for_graph)
+        if st.sidebar.button(f"Generate {selected_graph_type}"):
+            if selected_graph_type == "Select a graph type":
+                st.sidebar.warning("Please select a graph type.")
+            elif selected_graph_type != "Correlation Heatmap" and not columns_to_plot:
+                st.sidebar.warning(f"Please select appropriate columns for {selected_graph_type}.")
+            else:
+                with st.spinner(f"Generating {selected_graph_type.lower()}..."):
+                    img_buffer, graph_desc = generate_and_display_graph(
+                        st.session_state['df'], 
+                        selected_graph_type.lower().replace(" ", "_"), 
+                        columns_to_plot
+                    )
                     if img_buffer:
-                        st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Graph Generated: {graph_type.replace('_', ' ').title()}"})
+                        # Add graph to messages for persistent display
+                        st.session_state.messages.append({"role": "graph", "content": img_buffer, "caption": graph_desc})
+                        st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Graph Generated: {selected_graph_type}"})
                         st.session_state.report_content.append({"type": "image", "content": img_buffer, "caption": graph_desc})
-                        graph_generated = True
                         
                         # Get AI interpretation of the graph
                         interpretation_prompt = (
-                            f"A {graph_type.replace('_', ' ')} of the dataset was just generated. "
+                            f"A {selected_graph_type.lower()} of the dataset was just generated. "
                             f"Here is its description: '{graph_desc}'. "
                             "Please provide a concise interpretation of what this graph tells us about the data, "
                             "especially in the context of data preprocessing. Do NOT provide code."
@@ -489,30 +483,73 @@ def main_app():
                     else:
                         st.session_state.messages.append({"role": "assistant", "content": graph_desc}) # graph_desc will contain error message
                         st.session_state.report_content.append({"type": "text", "content": graph_desc})
-            
-            # --- General Chatbot Response (if no graph was generated) ---
-            if not graph_generated:
-                # Update user goal if explicitly stated in the prompt
-                if "my goal is" in prompt_lower or "i want to do" in prompt_lower or "my objective is" in prompt_lower:
-                    st.session_state['user_goal'] = prompt # Simple capture for now
-                    st.session_state.report_content.append({"type": "heading", "level": 2, "content": "User's Stated Goal"})
-                    st.session_state.report_content.append({"type": "text", "content": prompt})
+                st.rerun() # Rerun to display the new message/graph immediately
+
+        # --- Basic Data Manipulation (New Section) ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("Basic Data Operations")
+
+        if st.session_state['df'] is not None and 'Knockout Percentage' in st.session_state['df'].columns:
+            if st.sidebar.button("Convert 'Knockout Percentage' to Numeric"):
+                df_copy = st.session_state['df'].copy()
+                original_dtype = df_copy['Knockout Percentage'].dtype
+
+                try:
+                    # Remove '%' and convert to numeric
+                    df_copy['Knockout Percentage'] = df_copy['Knockout Percentage'].astype(str).str.replace('%', '').astype(float)
+                    st.session_state['df'] = df_copy # Update the DataFrame in session state
+
+                    # Regenerate summary as data types have changed
+                    summary_text, summary_table = get_data_summary(st.session_state['df'])
+                    st.session_state['data_summary_text'] = summary_text
+                    st.session_state['data_summary_table'] = summary_table
+
+                    conversion_message = (
+                        "Successfully converted 'Knockout Percentage' to numeric (float) by removing the '%' sign. "
+                        f"Its data type is now {st.session_state['df']['Knockout Percentage'].dtype}. "
+                        "This is a crucial step for using this column in regression models. "
+                        "The dataset overview has been updated to reflect this change."
+                    )
+                    st.session_state.messages.append({"role": "assistant", "content": conversion_message})
+                    st.session_state.report_content.append({"type": "heading", "level": 2, "content": "Data Operation: 'Knockout Percentage' Conversion"})
+                    st.session_state.report_content.append({"type": "text", "content": conversion_message})
+                    st.rerun()
+                except Exception as e:
+                    error_message = f"Failed to convert 'Knockout Percentage' to numeric: {e}. Please ensure the column only contains numerical values and '%'."
+                    st.session_state.messages.append({"role": "assistant", "content": error_message})
+                    st.session_state.report_content.append({"type": "text", "content": error_message})
+                    st.rerun()
+        else:
+            st.sidebar.info("Upload data to enable data operations.")
 
 
-                # Construct prompt for OpenAI, including data summary and full chat history
-                full_prompt = (
-                    f"Dataset Summary:\n{st.session_state['data_summary_text']}\n\n"
-                    "Conversation History:\n" + "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages]) +
-                    f"\n\nUser's current message: {prompt}\n\n"
-                    "Based on the dataset summary and our conversation, provide tailored preprocessing advice, "
-                    "including explanations. Do NOT provide Python code snippets. "
-                    "If the user has stated a goal, ensure your advice aligns with it."
-                )
+        # Chat input box - positioned before the footer
+        if prompt := st.chat_input("Ask about preprocessing or analysis..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-                with st.spinner("Generating response..."):
-                    response = generate_openai_response(full_prompt)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-                    st.session_state.report_content.append({"type": "text", "content": response}) # Log AI responses for report
+            # Update user goal if explicitly stated in the prompt
+            prompt_lower = prompt.lower()
+            if "my goal is" in prompt_lower or "i want to do" in prompt_lower or "my objective is" in prompt_lower:
+                st.session_state['user_goal'] = prompt # Simple capture for now
+                st.session_state.report_content.append({"type": "heading", "level": 2, "content": "User's Stated Goal"})
+                st.session_state.report_content.append({"type": "text", "content": prompt})
+
+            # Construct prompt for OpenAI, including data summary and full chat history
+            full_prompt = (
+                f"Dataset Summary:\n{st.session_state['data_summary_text']}\n\n"
+                "Conversation History:\n" + "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages]) +
+                f"\n\nUser's current message: {prompt}\n\n"
+                "Based on the dataset summary and our conversation, provide tailored preprocessing advice, "
+                "including explanations. Do NOT provide Python code snippets. "
+                "If the user has stated a goal, ensure your advice aligns with it."
+            )
+
+            with st.spinner("Generating response..."):
+                response = generate_openai_response(full_prompt)
+                st.session_state.messages.append({"role": "assistant", "content": response})
+                st.session_state.report_content.append({"type": "text", "content": response}) # Log AI responses for report
             st.rerun() # Rerun to display the new message/graph
 
     st.sidebar.markdown("---")
