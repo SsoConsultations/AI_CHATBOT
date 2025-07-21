@@ -11,7 +11,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 import matplotlib.pyplot as plt
 import seaborn as sns
-import re # For parsing graph requests
+import re # For parsing graph requests and markdown bolding
 
 # --- Configuration and Secrets ---
 # IMPORTANT: Create a .streamlit/secrets.toml file in your project root
@@ -159,13 +159,13 @@ def get_data_summary(df):
 def generate_openai_response(prompt, model="gpt-3.5-turbo"):
     """
     Sends a prompt to the OpenAI API and returns the response.
-    Explicitly instructs the model NOT to provide Python code snippets.
+    Explicitly instructs the model NOT to provide Python code snippets or markdown formatting.
     """
     try:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT provide Python code snippets in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
+                {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT provide Python code snippets or markdown formatting like bolding or italics in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
                 *st.session_state.messages, # Include full conversation history
                 {"role": "user", "content": prompt}
             ],
@@ -210,7 +210,22 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
             run = heading.add_run(content)
             run.bold = True # Ensure headings are bold
         elif item_type == "text":
-            document.add_paragraph(content)
+            # Process markdown bolding within text content
+            lines = content.split('\n')
+            for line in lines:
+                p = document.add_paragraph()
+                # Find all bolded parts using regex
+                # This regex captures text between ** and **. The (.*?) makes it non-greedy.
+                # It also handles cases where bolding might be at the start/end or within a line.
+                parts = re.split(r'(\*\*.*?\*\*)', line)
+                for part in parts:
+                    if part.startswith('**') and part.endswith('**'):
+                        # This is a bolded part, remove asterisks
+                        run = p.add_run(part[2:-2])
+                        run.bold = True
+                    else:
+                        # This is plain text
+                        p.add_run(part)
         elif item_type == "table":
             headers = item.get("headers", [])
             rows = item.get("rows", [])
@@ -440,9 +455,14 @@ def main_app():
         categorical_columns = st.session_state['df'].select_dtypes(include=['object', 'category']).columns.tolist()
 
         columns_to_plot = []
-        if selected_graph_type in ["Histogram", "Box Plot", "Bar Chart"]:
-            col_options = numerical_columns if selected_graph_type in ["Histogram", "Box Plot"] else categorical_columns
+        if selected_graph_type in ["Histogram", "Box Plot"]:
+            col_options = numerical_columns
             selected_col = st.sidebar.selectbox(f"Select Column for {selected_graph_type}:", ["Select a column"] + col_options, key="single_col_select")
+            if selected_col != "Select a column":
+                columns_to_plot = [selected_col]
+        elif selected_graph_type == "Bar Chart":
+            col_options = categorical_columns
+            selected_col = st.sidebar.selectbox(f"Select Column for {selected_graph_type}:", ["Select a column"] + col_options, key="single_col_select_cat")
             if selected_col != "Select a column":
                 columns_to_plot = [selected_col]
         elif selected_graph_type == "Scatter Plot":
@@ -455,7 +475,7 @@ def main_app():
         if st.sidebar.button(f"Generate {selected_graph_type}"):
             if selected_graph_type == "Select a graph type":
                 st.sidebar.warning("Please select a graph type.")
-            elif selected_graph_type != "Correlation Heatmap" and not columns_to_plot:
+            elif selected_graph_type not in ["Correlation Heatmap"] and not columns_to_plot:
                 st.sidebar.warning(f"Please select appropriate columns for {selected_graph_type}.")
             else:
                 with st.spinner(f"Generating {selected_graph_type.lower()}..."):
