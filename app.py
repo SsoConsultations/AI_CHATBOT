@@ -11,18 +11,21 @@ from docx.enum.section import WD_SECTION_START
 # --- Configuration and Secrets ---
 # IMPORTANT: Create a .streamlit/secrets.toml file in your project root
 # and add your OpenAI API key and login credentials there.
-# Example secrets.toml:
-# OPENAI_API_KEY="your_openai_api_key_here"
-# LOGIN_USERNAME="admin"
-# LOGIN_PASSWORD="your_plain_text_password_here"
+# Example secrets.toml structure:
+# [openai]
+# api_key = "sk-proj-your_openai_api_key_here"
+#
+# [credentials]
+# user1 = "User1@123"
+# user2 = "User2@123"
+# "ssoconsultants14@gmail.com" = "Sso@123"
 
 # Load secrets
 try:
-    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-    LOGIN_USERNAME = st.secrets["LOGIN_USERNAME"]
-    LOGIN_PASSWORD = st.secrets["LOGIN_PASSWORD"]
-except KeyError:
-    st.error("Secrets not found! Please create a .streamlit/secrets.toml file with OPENAI_API_KEY, LOGIN_USERNAME, and LOGIN_PASSWORD.")
+    OPENAI_API_KEY = st.secrets["openai"]["api_key"] # Accessing the api_key from the [openai] section
+    LOGIN_USERS = st.secrets["credentials"]          # Accessing the users from the [credentials] section
+except KeyError as e:
+    st.error(f"Secret not found: {e}. Please ensure your .streamlit/secrets.toml file is correctly configured with [openai] and [credentials] sections.")
     st.stop() # Stop the app if secrets are missing
 
 # Initialize OpenAI client
@@ -32,6 +35,8 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # Initialize session state variables if they don't exist
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
+if 'current_username' not in st.session_state:
+    st.session_state['current_username'] = None
 if 'df' not in st.session_state:
     st.session_state['df'] = None
 if 'data_summary' not in st.session_state:
@@ -42,12 +47,14 @@ if 'report_content' not in st.session_state:
     st.session_state['report_content'] = [] # List to store report sections
 if 'user_goal' not in st.session_state:
     st.session_state['user_goal'] = "Not specified"
+if 'uploaded_file_name' not in st.session_state: # To track if a new file is uploaded
+    st.session_state['uploaded_file_name'] = None
 
 # --- Helper Functions ---
 
 def check_password():
     """
-    Checks if the entered username and password match the ones in st.secrets.
+    Checks if the entered username and password match any of the ones in st.secrets['credentials'].
     This uses plain-text password comparison as per user's request,
     acknowledging the security implications.
     """
@@ -63,9 +70,15 @@ def check_password():
         submit_button = st.form_submit_button("Login")
 
         if submit_button:
-            if username == LOGIN_USERNAME and password == LOGIN_PASSWORD:
-                st.session_state['logged_in'] = True
-                st.rerun() # Rerun to switch to the main app
+            # Check if the entered username exists in our stored users
+            if username in LOGIN_USERS:
+                # Compare the entered password with the stored plain-text password
+                if password == LOGIN_USERS[username]:
+                    st.session_state['logged_in'] = True
+                    st.session_state['current_username'] = username # Store current logged-in username
+                    st.rerun() # Rerun to switch to the main app
+                else:
+                    st.error("Invalid username or password.")
             else:
                 st.error("Invalid username or password.")
     return False
@@ -173,6 +186,9 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                 if in_code_block:
                     # End of code block, add accumulated code
                     p = document.add_paragraph()
+                    # Remove the language specifier from the first line of the code block
+                    if code_block_content and code_block_content[0].strip().startswith("```"):
+                        code_block_content[0] = code_block_content[0].strip()[3:]
                     p.add_run(f"\n{os.linesep.join(code_block_content)}\n").font.name = 'Consolas' # Example font for code
                     p.add_run("\n")
                     code_block_content = []
@@ -187,6 +203,9 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
         # If code block was open at the end (e.g., malformed markdown)
         if in_code_block and code_block_content:
             p = document.add_paragraph()
+            # Remove the language specifier from the first line of the code block
+            if code_block_content and code_block_content[0].strip().startswith("```"):
+                code_block_content[0] = code_block_content[0].strip()[3:]
             p.add_run(f"\n{os.linesep.join(code_block_content)}\n").font.name = 'Consolas'
             p.add_run("\n")
 
@@ -211,6 +230,8 @@ def main_app():
     # Display Logo at the top of the main app
     st.image("SsoLogo.jpg", width=100) # Adjust width as needed
     st.title("Data Preprocessing Assistant")
+    st.write(f"Welcome, {st.session_state.get('current_username', 'User')}!")
+
 
     st.sidebar.header("Upload Dataset")
     uploaded_file = st.sidebar.file_uploader("Choose a CSV or Excel file", type=["csv", "xlsx"])
@@ -270,8 +291,11 @@ def main_app():
                 st.markdown(prompt)
 
             # Update user goal if explicitly stated in the prompt
-            if "my goal is" in prompt.lower() or "i want to do" in prompt.lower():
-                st.session_state['user_goal'] = prompt # Simple capture for now
+            if "my goal is" in prompt.lower() or "i want to do" in prompt.lower() or "my objective is" in prompt.lower():
+                # Simple capture: take the whole prompt as the goal
+                st.session_state['user_goal'] = prompt
+                st.session_state.report_content.append(("User's Stated Goal", prompt))
+
 
             # Construct prompt for OpenAI, including data summary and full chat history
             full_prompt = (
@@ -320,6 +344,7 @@ def main_app():
     # Logout button in sidebar
     if st.sidebar.button("Logout"):
         st.session_state['logged_in'] = False
+        st.session_state['current_username'] = None
         st.session_state['df'] = None
         st.session_state['data_summary'] = ""
         st.session_state['messages'] = []
@@ -334,5 +359,4 @@ if not st.session_state['logged_in']:
     check_password()
 else:
     main_app()
-
 
