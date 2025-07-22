@@ -113,13 +113,13 @@ def check_openai_api_key():
             stream=False # Do not stream for this check
         )
         st.session_state['openai_client_initialized'] = True
-        st.success("OpenAI API key verified successfully!")
+        st.success("OpenAI API key verified successfully! AI features are enabled.")
         return True
     except AuthenticationError:
         st.error("OpenAI API Key is invalid. Please check your .streamlit/secrets.toml file.")
         return False
     except APIConnectionError as e:
-        st.error(f"Could not connect to OpenAI API: {e}. Please check your internet connection.")
+        st.error(f"Could not connect to OpenAI API: {e}. Please check your internet connection and firewall settings.")
         return False
     except RateLimitError:
         st.error("OpenAI API rate limit exceeded. Please try again later or check your OpenAI usage.")
@@ -209,7 +209,7 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
     global client # Use the global client variable
 
     if not st.session_state['openai_client_initialized']:
-        return "AI is not initialized. Please check your OpenAI API key and internet connection."
+        return "AI features are not enabled due to API key issues. Please check your OpenAI API key."
 
     try:
         response = client.chat.completions.create(
@@ -230,10 +230,10 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         st.error("OpenAI API Key is invalid during chat. Please check your .streamlit/secrets.toml file.")
         return "I'm sorry, my connection to the AI failed due to an invalid API key. Please contact support."
     except APIConnectionError as e:
-        st.error(f"Could not connect to OpenAI API during chat: {e}. Please check your internet connection.")
+        st.error(f"Could not connect to OpenAI API during chat: {e}. Please check your internet connection and firewall settings.")
         return "I'm sorry, I'm having trouble connecting to the AI. Please check your internet connection and try again."
     except RateLimitError:
-        st.error("OpenAI API rate limit exceeded during chat. Please try again later or check your OpenAI usage.")
+        st.error("OpenAI API rate limit exceeded during chat. Please try again in a moment.")
         return "I'm sorry, the AI is experiencing high demand. Please try again in a moment."
     except Exception as e:
         st.error(f"An unexpected error occurred during AI response generation: {e}")
@@ -278,25 +278,32 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                 # 1. Start of line with a digit and a dot (e.g., "1. ")
                 # 2. Text enclosed in double asterisks (e.g., **bold text**)
                 # Split by these, keeping the delimiters.
+                # Regex explanation:
+                # (^\d+\.\s+): Captures "1. " at the start of a line. Group 1.
+                # | : OR
+                # (\*\*.*?\*\*): Captures text between ** **. Group 2.
                 parts = re.split(r'(^\d+\.\s+)|(\*\*.*?\*\*)', line)
                 
-                for part in parts:
+                for i, part in enumerate(parts):
                     if part is None or part == '':
                         continue # Skip empty parts from split
 
                     if re.match(r'^\d+\.\s+', part):
                         # This is a numbered list prefix like "1. ", "2. "
-                        # Find the first significant word/phrase after the number for bolding
-                        remaining_text = line[line.find(part) + len(part):]
-                        bold_match = re.match(r'([^:\.\n]*)(.*)', remaining_text) # Capture up to colon/period/newline
-                        
-                        p.add_run(part) # Add "1. " as normal
-                        if bold_match and bold_match.group(1).strip():
-                            run = p.add_run(bold_match.group(1).strip())
-                            run.bold = True
-                            p.add_run(bold_match.group(2)) # Add the rest of the line
-                        else:
-                            p.add_run(remaining_text) # Fallback if no boldable phrase found
+                        # The next part in 'parts' list should be the actual content
+                        p.add_run(part) # Add the "1. " part as normal
+                        if i + 1 < len(parts) and parts[i+1] is not None:
+                            # Try to bold the first phrase of the list item
+                            phrase_to_bold_match = re.match(r'([^:\.\n]*)(.*)', parts[i+1]) # Capture up to colon/period/newline
+                            if phrase_to_bold_match:
+                                bold_text = phrase_to_bold_match.group(1).strip()
+                                rest_of_line = phrase_to_bold_match.group(2)
+                                if bold_text: # Only bold if there's actual text to bold
+                                    run = p.add_run(bold_text)
+                                    run.bold = True
+                                p.add_run(rest_of_line) # Add the rest of the line
+                            else:
+                                p.add_run(parts[i+1]) # Fallback if no boldable phrase found
                         break # Processed this line, move to next
                     elif part.startswith('**') and part.endswith('**'):
                         # This is a markdown bolded part
@@ -687,6 +694,39 @@ def main_app():
 
     st.sidebar.markdown("---")
     st.sidebar.header("Report & Actions")
+
+    # Add a "Reset Chat" button in the sidebar
+    if st.sidebar.button("Reset Chat"):
+        st.session_state['messages'] = []
+        st.session_state['report_content'] = []
+        st.session_state['user_goal'] = "Not specified"
+        # If a file is uploaded, re-trigger initial analysis
+        if st.session_state['df'] is not None:
+            summary_text, summary_table = get_data_summary(st.session_state['df'])
+            st.session_state['data_summary_text'] = summary_text
+            st.session_state['data_summary_table'] = summary_table
+            st.session_state['report_content'].append({"type": "heading", "level": 2, "content": "Dataset Overview"})
+            overview_text_end_index = summary_text.find("Column Details:")
+            if overview_text_end_index != -1:
+                overview_text = summary_text[:overview_text_end_index].strip()
+            else:
+                overview_text = summary_text.strip()
+            st.session_state['report_content'].append({"type": "text", "content": overview_text})
+            st.session_state['report_content'].append({"type": "table", "headers": summary_table[0], "rows": summary_table[1:]})
+            
+            initial_ai_prompt = (
+                "Here is a detailed summary of the user's dataset:\n\n"
+                f"{st.session_state['data_summary_text']}\n\n"
+                "Based on this, what are the initial preprocessing considerations? "
+                "Please also ask the user about their primary goal (e.g., classification, regression, exploratory analysis) for this dataset."
+            )
+            with st.spinner("Analyzing data and generating initial insights..."):
+                initial_response = generate_openai_response(initial_ai_prompt)
+                st.session_state.messages.append({"role": "assistant", "content": initial_response})
+                st.session_state.report_content.append({"type": "heading", "level": 2, "content": "Initial Preprocessing Considerations"})
+                st.session_state.report_content.append({"type": "text", "content": initial_response})
+        st.rerun()
+
 
     # Download Report Button
     if st.sidebar.button("Generate & Download Report"):
