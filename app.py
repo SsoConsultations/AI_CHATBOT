@@ -212,6 +212,10 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         return "AI features are not enabled due to API key issues. Please check your OpenAI API key."
 
     try:
+        # DEBUG: Print messages being sent to OpenAI
+        # st.write("DEBUG: Messages sent to OpenAI:", st.session_state.messages) # Uncomment for debugging
+        # st.write("DEBUG: Current prompt:", prompt) # Uncomment for debugging
+
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -237,6 +241,7 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         return "I'm sorry, the AI is experiencing high demand. Please try again in a moment."
     except Exception as e:
         st.error(f"An unexpected error occurred during AI response generation: {e}")
+        st.exception(e) # Display the full traceback in the Streamlit UI for debugging
         return "I'm sorry, an unexpected error occurred while generating the AI response. Please try again later."
 
 
@@ -773,4 +778,3 @@ if not st.session_state['logged_in']:
     check_password()
 else:
     main_app()
-
