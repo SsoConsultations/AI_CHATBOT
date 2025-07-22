@@ -11,6 +11,7 @@ from docx.enum.section import WD_SECTION_START
 import matplotlib.pyplot as plt
 import seaborn as sns
 import re # For parsing graph requests and markdown bolding
+from scipy import stats # For statistical tests
 
 # --- Configuration and Secrets ---
 # IMPORTANT: Create a .streamlit/secrets.toml file in your project root
@@ -31,6 +32,9 @@ try:
 except KeyError as e:
     st.error(f"Secret not found: {e}. Please ensure your .streamlit/secrets.toml file is correctly configured with [openai] and [credentials] sections.")
     st.stop() # Stop the app if secrets are missing
+
+# Initialize OpenAI client (will be initialized after API key check)
+client = None 
 
 # --- Session State Initialization ---
 # Initialize session state variables if they don't exist
@@ -214,15 +218,14 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         return "AI features are not enabled due to API key issues. Please check your OpenAI API key."
 
     try:
-        # DEBUG: Print messages being sent to OpenAI
-        # st.write("DEBUG: Messages sent to OpenAI:", st.session_state.messages) # Uncomment for debugging
-        # st.write("DEBUG: Current prompt:", prompt) # Uncomment for debugging
-
         response = client_instance.chat.completions.create( # Use client_instance here
             model=model,
             messages=[
                 {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks) in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
-                *st.session_state.messages, # Include full conversation history
+                # Only include relevant chat history for AI to avoid exceeding token limits for long conversations
+                # For simplicity, we'll send a limited history, or just the last few turns
+                # For now, sending full history, but be aware of token limits for very long chats
+                *st.session_state.messages[-5:], # Send last 5 messages + current prompt to save tokens
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
@@ -299,9 +302,11 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                         # This is a numbered list prefix like "1. ", "2. "
                         # The next part in 'parts' list should be the actual content
                         p.add_run(part) # Add the "1. " part as normal
-                        if i + 1 < len(parts) and parts[i+1] is not None:
+                        # Check if there's content after the number and if it's not another delimiter
+                        if i + 1 < len(parts) and parts[i+1] is not None and not re.match(r'^\d+\.\s+|$', parts[i+1]):
                             # Try to bold the first phrase of the list item
-                            phrase_to_bold_match = re.match(r'([^:\.\n]*)(.*)', parts[i+1]) # Capture up to colon/period/newline
+                            # This regex captures text up to a colon, period, or end of line/string
+                            phrase_to_bold_match = re.match(r'([^:\.\n]*)(.*)', parts[i+1]) 
                             if phrase_to_bold_match:
                                 bold_text = phrase_to_bold_match.group(1).strip()
                                 rest_of_line = phrase_to_bold_match.group(2)
@@ -373,98 +378,83 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
     bio.seek(0) # Rewind the buffer to the beginning
     return bio
 
-def generate_and_display_graph(df, graph_type, columns):
+def perform_statistical_test(df, test_type, col1, col2=None):
     """
-    Generates and displays a graph based on user request.
-    Returns a tuple: (BytesIO object of plot, description of the plot for AI interpretation).
-    Returns (None, error_message) if generation fails.
+    Performs the selected statistical test and returns the results as a formatted string.
     """
-    fig, ax = plt.subplots(figsize=(10, 6))
-    graph_description = ""
-    
+    results_str = ""
+    error_message = None
+
     try:
-        if graph_type == "histogram":
-            if len(columns) == 1 and pd.api.types.is_numeric_dtype(df[columns[0]]):
-                sns.histplot(df[columns[0]], kde=True, ax=ax)
-                ax.set_title(f"Histogram of {columns[0]}")
-                ax.set_xlabel(columns[0])
-                ax.set_ylabel("Frequency")
-                graph_description = f"A histogram for the '{columns[0]}' column was generated. It shows the distribution of values for this numerical feature."
+        if test_type == "anova":
+            if not pd.api.types.is_numeric_dtype(df[col1]):
+                error_message = f"ANOVA: Dependent variable '{col1}' must be numerical."
+            elif not pd.api.types.is_object_dtype(df[col2]) and not pd.api.types.is_string_dtype(df[col2]) and not pd.api.types.is_categorical_dtype(df[col2]):
+                error_message = f"ANOVA: Independent variable '{col2}' must be categorical."
             else:
-                plt.close(fig) # Close figure if not used
-                return None, "Please specify a single numerical column for a histogram."
-
-        elif graph_type == "boxplot":
-            if len(columns) == 1 and pd.api.types.is_numeric_dtype(df[columns[0]]):
-                sns.boxplot(y=df[columns[0]], ax=ax)
-                ax.set_title(f"Box Plot of {columns[0]}")
-                ax.set_ylabel(columns[0])
-                graph_description = f"A box plot for the '{columns[0]}' column was generated. It visualizes the distribution, median, quartiles, and potential outliers of this numerical feature."
-            else:
-                plt.close(fig)
-                return None, "Please specify a single numerical column for a box plot."
-
-        elif graph_type == "scatterplot":
-            if len(columns) == 2:
-                col1_is_numeric = pd.api.types.is_numeric_dtype(df[columns[0]])
-                col2_is_numeric = pd.api.types.is_numeric_dtype(df[columns[1]])
-                if col1_is_numeric and col2_is_numeric:
-                    sns.scatterplot(x=df[columns[0]], y=df[columns[1]], ax=ax)
-                    ax.set_title(f"Scatter Plot of {columns[0]} vs {columns[1]}")
-                    ax.set_xlabel(columns[0])
-                    ax.set_ylabel(columns[1])
-                    graph_description = f"A scatter plot showing the relationship between '{columns[0]}' and '{columns[1]}' was generated. It helps visualize correlations or patterns between these two numerical features."
+                groups = [df[col1][df[col2] == g].dropna() for g in df[col2].unique()]
+                if len(groups) < 2:
+                    error_message = f"ANOVA: Independent variable '{col2}' needs at least 2 distinct groups."
+                elif any(len(g) == 0 for g in groups):
+                    error_message = f"ANOVA: Some groups in '{col2}' have no data for '{col1}' after dropping NaNs."
                 else:
-                    plt.close(fig)
-                    non_numeric_cols = [col for col, is_num in zip(columns, [col1_is_numeric, col2_is_numeric]) if not is_num]
-                    return None, f"For a scatter plot, both selected columns must be numerical. The following are not numerical: {', '.join(non_numeric_cols)}."
-            else:
-                plt.close(fig)
-                return None, "Please specify two numerical columns for a scatter plot."
+                    f_statistic, p_value = stats.f_oneway(*groups)
+                    results_str = (
+                        f"ANOVA Test Results for '{col1}' by '{col2}':\n"
+                        f"  F-statistic: {f_statistic:.4f}\n"
+                        f"  P-value: {p_value:.4f}\n"
+                        "Interpretation will be provided by the AI."
+                    )
 
-        elif graph_type == "correlation_heatmap":
-            numerical_cols = df.select_dtypes(include=['number']).columns
-            if not numerical_cols.empty:
-                corr_matrix = df[numerical_cols].corr()
-                sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f", ax=ax)
-                ax.set_title("Correlation Heatmap of Numerical Features")
-                graph_description = "A correlation heatmap of all numerical features was generated. It displays the pairwise correlation coefficients, indicating the strength and direction of linear relationships between variables."
+        elif test_type == "t_test":
+            if not pd.api.types.is_numeric_dtype(df[col1]):
+                error_message = f"T-test: Numerical variable '{col1}' must be numerical."
+            elif not pd.api.types.is_object_dtype(df[col2]) and not pd.api.types.is_string_dtype(df[col2]) and not pd.api.types.is_categorical_dtype(df[col2]):
+                error_message = f"T-test: Grouping variable '{col2}' must be categorical."
             else:
-                plt.close(fig)
-                return None, "No numerical columns found to generate a correlation heatmap."
-        
-        elif graph_type == "bar_chart":
-            if len(columns) == 1 and (pd.api.types.is_object_dtype(df[columns[0]]) or pd.api.types.is_string_dtype(df[columns[0]]) or pd.api.types.is_categorical_dtype(df[columns[0]])):
-                value_counts = df[columns[0]].value_counts().head(10) # Limit to top 10 categories
-                if value_counts.empty:
-                    plt.close(fig)
-                    return None, f"No data found for bar chart in column '{columns[0]}'."
-                sns.barplot(x=value_counts.index, y=value_counts.values, ax=ax)
-                ax.set_title(f"Bar Chart of Top Categories in {columns[0]}")
-                ax.set_xlabel(columns[0])
-                ax.set_ylabel("Count")
-                plt.xticks(rotation=45, ha='right') # Rotate labels for readability
-                plt.tight_layout()
-                graph_description = f"A bar chart showing the frequency of top categories in '{columns[0]}' was generated. It helps visualize the distribution of categorical values."
-            else:
-                plt.close(fig)
-                return None, "Please specify a single categorical column for a bar chart."
+                unique_groups = df[col2].unique()
+                if len(unique_groups) != 2:
+                    error_message = f"T-test: Grouping variable '{col2}' must have exactly 2 distinct groups. Found {len(unique_groups)}."
+                else:
+                    group1_data = df[col1][df[col2] == unique_groups[0]].dropna()
+                    group2_data = df[col1][df[col2] == unique_groups[1]].dropna()
+                    if len(group1_data) == 0 or len(group2_data) == 0:
+                        error_message = f"T-test: One or both groups have no data for '{col1}' after dropping NaNs."
+                    else:
+                        t_statistic, p_value = stats.ttest_ind(group1_data, group2_data)
+                        results_str = (
+                            f"Independent T-test Results for '{col1}' by '{col2}' ({unique_groups[0]} vs {unique_groups[1]}):\n"
+                            f"  T-statistic: {t_statistic:.4f}\n"
+                            f"  P-value: {p_value:.4f}\n"
+                            "Interpretation will be provided by the AI."
+                        )
 
+        elif test_type == "chi_squared":
+            if not (pd.api.types.is_object_dtype(df[col1]) or pd.api.types.is_string_dtype(df[col1]) or pd.api.types.is_categorical_dtype(df[col1])):
+                error_message = f"Chi-squared: Column 1 '{col1}' must be categorical."
+            elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
+                error_message = f"Chi-squared: Column 2 '{col2}' must be categorical."
+            else:
+                contingency_table = pd.crosstab(df[col1], df[col2])
+                if contingency_table.empty or contingency_table.sum().sum() == 0:
+                     error_message = f"Chi-squared: No valid data to form a contingency table for '{col1}' and '{col2}'."
+                else:
+                    chi2, p_value, dof, expected = stats.chi2_contingency(contingency_table)
+                    results_str = (
+                        f"Chi-squared Test Results for '{col1}' and '{col2}':\n"
+                        f"  Chi-squared statistic: {chi2:.4f}\n"
+                        f"  P-value: {p_value:.4f}\n"
+                        f"  Degrees of Freedom (dof): {dof}\n"
+                        "Interpretation will be provided by the AI."
+                    )
         else:
-            plt.close(fig)
-            return None, "Unsupported graph type requested. Please ask for a histogram, box plot, scatter plot, correlation heatmap, or bar chart."
-
-        # Save plot to BytesIO for display and report
-        img_buffer = io.BytesIO()
-        fig.savefig(img_buffer, format='png', bbox_inches='tight')
-        img_buffer.seek(0) # Rewind the buffer to the beginning
-        plt.close(fig) # Close the plot to free up memory
-        return img_buffer, graph_description
+            error_message = "Unsupported statistical test type selected."
 
     except Exception as e:
-        st.error(f"Error generating graph: {e}")
-        plt.close(fig) # Ensure figure is closed even on error
-        return None, f"An error occurred while generating the graph: {e}. Please check column names and data types."
+        error_message = f"An error occurred during the statistical test: {e}. Please check your column selections and data."
+        st.exception(e) # Display traceback in UI for debugging
+
+    return results_str, error_message
 
 # --- Main Application Logic ---
 def main_app():
@@ -545,7 +535,6 @@ def main_app():
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 if message["role"] == "graph" and "content" in message:
-                    # Fix: Changed use_column_width to use_container_width
                     st.image(message["content"], caption=message.get("caption", ""), use_container_width=True)
                 else:
                     st.markdown(message["content"])
@@ -669,6 +658,64 @@ def main_app():
         else:
             st.sidebar.info("Upload data or ensure columns with '%' exist to enable data operations.")
 
+        # --- Statistical Tests (New Section) ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("Perform Statistical Tests")
+
+        test_options = ["Select a test", "ANOVA", "Independent T-test", "Chi-squared Test"]
+        selected_test = st.sidebar.selectbox("Choose Statistical Test:", test_options, key="stat_test_select")
+
+        stat_col1 = None
+        stat_col2 = None
+
+        if selected_test == "ANOVA":
+            st.sidebar.info("ANOVA: Compares means of a numerical variable across 2+ categories.")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + numerical_columns, key="anova_num_col")
+            stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + categorical_columns, key="anova_cat_col")
+        elif selected_test == "Independent T-test":
+            st.sidebar.info("T-test: Compares means of a numerical variable between 2 groups.")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="ttest_num_col")
+            stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ttest_cat_col")
+        elif selected_test == "Chi-squared Test":
+            st.sidebar.info("Chi-squared: Tests association between two categorical variables.")
+            stat_col1 = st.sidebar.selectbox("Categorical Variable 1:", ["Select column"] + categorical_columns, key="chi2_cat1_col")
+            stat_col2 = st.sidebar.selectbox("Categorical Variable 2:", ["Select column"] + categorical_columns, key="chi2_cat2_col")
+        
+        if st.sidebar.button(f"Run {selected_test}"):
+            if selected_test == "Select a test":
+                st.sidebar.warning("Please select a statistical test to run.")
+            elif stat_col1 == "Select column" or (selected_test != "Chi-squared Test" and stat_col2 == "Select column"):
+                 st.sidebar.warning("Please select all required columns for the chosen test.")
+            elif selected_test == "Chi-squared Test" and stat_col2 == "Select column": # Specific check for Chi-squared
+                 st.sidebar.warning("Please select both categorical columns for the Chi-squared test.")
+            else:
+                with st.spinner(f"Running {selected_test}..."):
+                    test_results_str, test_error = perform_statistical_test(
+                        st.session_state['df'], 
+                        selected_test.lower().replace(" ", "_").replace("-", "_"), # Convert to snake_case
+                        stat_col1, 
+                        stat_col2
+                    )
+                    if test_error:
+                        st.session_state.messages.append({"role": "assistant", "content": test_error})
+                        st.session_state.report_content.append({"type": "text", "content": f"Statistical Test Error ({selected_test}): {test_error}"})
+                    else:
+                        st.session_state.messages.append({"role": "assistant", "content": test_results_str})
+                        st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Statistical Test: {selected_test}"})
+                        st.session_state.report_content.append({"type": "text", "content": test_results_str})
+
+                        # Get AI interpretation of the test results
+                        interpretation_prompt = (
+                            f"A {selected_test} was just performed with the following results:\n"
+                            f"{test_results_str}\n"
+                            "Please provide a concise, plain-language interpretation of these results, "
+                            "focusing on what the p-value means and the implications for the relationship between the variables. "
+                            "Do NOT provide code or markdown formatting."
+                        )
+                        ai_interpretation = generate_openai_response(interpretation_prompt)
+                        st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
+                        st.session_state.report_content.append({"type": "text", "content": ai_interpretation})
+                st.rerun()
 
         # Chat input box - positioned before the footer
         if prompt := st.chat_input("Ask about preprocessing or analysis..."):
@@ -781,3 +828,4 @@ if not st.session_state['logged_in']:
     check_password()
 else:
     main_app()
+
