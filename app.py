@@ -32,9 +32,6 @@ except KeyError as e:
     st.error(f"Secret not found: {e}. Please ensure your .streamlit/secrets.toml file is correctly configured with [openai] and [credentials] sections.")
     st.stop() # Stop the app if secrets are missing
 
-# Initialize OpenAI client (will be initialized after API key check)
-client = None 
-
 # --- Session State Initialization ---
 # Initialize session state variables if they don't exist
 if 'logged_in' not in st.session_state:
@@ -57,6 +54,8 @@ if 'uploaded_file_name' not in st.session_state: # To track if a new file is upl
     st.session_state['uploaded_file_name'] = None
 if 'openai_client_initialized' not in st.session_state:
     st.session_state['openai_client_initialized'] = False
+if 'openai_client' not in st.session_state: # New: Store OpenAI client instance here
+    st.session_state['openai_client'] = None
 
 # --- Helper Functions ---
 
@@ -93,20 +92,18 @@ def check_password():
 
 def check_openai_api_key():
     """
-    Attempts a simple OpenAI API call to verify the API key.
+    Attempts a simple OpenAI API call to verify the API key and store the client.
     Returns True if successful, False otherwise.
     """
-    global client # Use the global client variable
-
-    if st.session_state['openai_client_initialized']:
+    if st.session_state['openai_client_initialized'] and st.session_state['openai_client'] is not None:
         return True # Already checked and initialized
 
     try:
-        # Initialize client here for the check
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        # Initialize client and store in session state
+        st.session_state['openai_client'] = OpenAI(api_key=OPENAI_API_KEY)
+        
         # Attempt a simple call to verify the key
-        # Using chat completions with a very small prompt and max_tokens
-        response = client.chat.completions.create(
+        response = st.session_state['openai_client'].chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=5,
@@ -117,15 +114,19 @@ def check_openai_api_key():
         return True
     except AuthenticationError:
         st.error("OpenAI API Key is invalid. Please check your .streamlit/secrets.toml file.")
+        st.session_state['openai_client'] = None # Clear client on failure
         return False
     except APIConnectionError as e:
         st.error(f"Could not connect to OpenAI API: {e}. Please check your internet connection and firewall settings.")
+        st.session_state['openai_client'] = None # Clear client on failure
         return False
     except RateLimitError:
         st.error("OpenAI API rate limit exceeded. Please try again later or check your OpenAI usage.")
+        st.session_state['openai_client'] = None # Clear client on failure
         return False
     except Exception as e:
         st.error(f"An unexpected error occurred while checking OpenAI API key: {e}")
+        st.session_state['openai_client'] = None # Clear client on failure
         return False
 
 
@@ -206,9 +207,10 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
     Sends a prompt to the OpenAI API and returns the response.
     Explicitly instructs the model NOT to provide Python code snippets or markdown formatting.
     """
-    global client # Use the global client variable
+    # Retrieve client from session state
+    client_instance = st.session_state.get('openai_client')
 
-    if not st.session_state['openai_client_initialized']:
+    if client_instance is None or not st.session_state['openai_client_initialized']:
         return "AI features are not enabled due to API key issues. Please check your OpenAI API key."
 
     try:
@@ -216,7 +218,7 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         # st.write("DEBUG: Messages sent to OpenAI:", st.session_state.messages) # Uncomment for debugging
         # st.write("DEBUG: Current prompt:", prompt) # Uncomment for debugging
 
-        response = client.chat.completions.create(
+        response = client_instance.chat.completions.create( # Use client_instance here
             model=model,
             messages=[
                 {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks) in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
@@ -475,7 +477,7 @@ def main_app():
 
     # --- OpenAI API Key Check ---
     # Perform this check once after login
-    if not st.session_state['openai_client_initialized']:
+    if not st.session_state['openai_client_initialized'] or st.session_state['openai_client'] is None:
         with st.spinner("Verifying OpenAI API key..."):
             if not check_openai_api_key():
                 st.stop() # Stop the app if API key is invalid or connection fails
@@ -771,6 +773,7 @@ def main_app():
         if 'uploaded_file_name' in st.session_state:
             del st.session_state['uploaded_file_name']
         st.session_state['openai_client_initialized'] = False # Reset OpenAI client status on logout
+        st.session_state['openai_client'] = None # Clear OpenAI client instance on logout
         st.rerun()
 
 # --- Run the App ---
