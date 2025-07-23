@@ -130,7 +130,7 @@ def check_openai_api_key():
         return False
     except Exception as e:
         st.error(f"An unexpected error occurred while checking OpenAI API key: {e}")
-        st.session_state['openai_client'] = None # Clear client on failure
+        st.session_session['openai_client'] = None # Clear client on failure
         return False
 
 
@@ -557,7 +557,28 @@ def main_app():
     if st.session_state['df'] is not None:
         # --- Persistent Data Preview Area ---
         st.subheader("Current Dataset Preview (Top 5 Rows):")
-        st.dataframe(st.session_state['df'].head())
+        
+        # Data type short form mapping (re-used from report generation)
+        dtype_map = {
+            'int64': 'int', # Changed from 'num' to 'int' for clarity in UI
+            'float64': 'float', # Changed from 'num' to 'float' for clarity in UI
+            'object': 'str',
+            'category': 'str',
+            'datetime64[ns]': 'date',
+            'datetime64': 'date',
+            'bool': 'bool'
+        }
+
+        # Create a copy of the DataFrame to modify column names for display
+        display_df = st.session_state['df'].head().copy()
+        new_columns = []
+        for col in display_df.columns:
+            original_dtype = str(st.session_state['df'][col].dtype) # Get original dtype from full df
+            short_dtype = dtype_map.get(original_dtype, 'other')
+            new_columns.append(f"{col} ({short_dtype})")
+        display_df.columns = new_columns
+
+        st.dataframe(display_df)
         st.write(f"Shape: {st.session_state['df'].shape[0]} rows, {st.session_state['df'].shape[1]} columns")
         st.markdown("---") # Separator for clarity
 
