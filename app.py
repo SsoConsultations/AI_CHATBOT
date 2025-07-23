@@ -562,7 +562,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         "Interpretation will be provided by the AI."
                     )
 
-        elif test_type == "t_test":
+        elif test_type == "independent_t_test": # FIXED: Changed from "t_test"
             append_debug_log(f"DEBUG T-test: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG T-test: df[col1].dtype={df[col1].dtype}, df[col2].dtype={df[col2].dtype}")
             append_debug_log(f"DEBUG T-test: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
@@ -591,7 +591,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                             "Interpretation will be provided by the AI."
                         )
 
-        elif test_type == "chi_squared":
+        elif test_type == "chi_squared_test": # FIXED: Changed from "chi_squared"
             append_debug_log(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Chi-squared: df[col1].dtype={df[col1].dtype}, df[col2].dtype={df[col2].dtype}")
             append_debug_log(f"DEBUG Chi-squared: is_categorical_dtype(col1)={pd.api.types.is_categorical_dtype(df[col1])} | is_object_dtype(col1)={pd.api.types.is_object_dtype(df[col1])} | is_string_dtype(col1)={pd.api.types.is_string_dtype(df[col1])}")
