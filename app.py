@@ -3,7 +3,8 @@ import pandas as pd
 import io
 import os
 from openai import OpenAI
-from openai import AuthenticationError, APIConnectionError, RateLimitError # Import specific OpenAI errors
+from openai import AuthenticationError, APIConnectionError, RateLimitError, APIStatusError # Import specific OpenAI errors
+import requests # Import requests for potential timeout errors
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -60,8 +61,14 @@ if 'openai_client_initialized' not in st.session_state:
     st.session_state['openai_client_initialized'] = False
 if 'openai_client' not in st.session_state: # New: Store OpenAI client instance here
     st.session_state['openai_client'] = None
+if 'debug_logs' not in st.session_state: # New: For in-app debug logs
+    st.session_state['debug_logs'] = []
 
 # --- Helper Functions ---
+
+# Function to append debug messages to session state
+def append_debug_log(message):
+    st.session_state['debug_logs'].append(message)
 
 def check_password():
     """
@@ -111,7 +118,8 @@ def check_openai_api_key():
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=5,
-            stream=False # Do not stream for this check
+            stream=False, # Do not stream for this check
+            timeout=10 # Add a timeout for the API call
         )
         st.session_state['openai_client_initialized'] = True
         st.success("OpenAI API key verified successfully! AI features are enabled.")
@@ -127,6 +135,14 @@ def check_openai_api_key():
     except RateLimitError:
         st.error("OpenAI API rate limit exceeded. Please try again later or check your OpenAI usage.")
         st.session_state['openai_client'] = None # Clear client on failure
+        return False
+    except requests.exceptions.Timeout:
+        st.error("OpenAI API connection timed out during key verification. Please try again.")
+        st.session_state['openai_client'] = None
+        return False
+    except APIStatusError as e: # Catch API specific status errors
+        st.error(f"OpenAI API returned an error status: {e.status_code} - {e.response}")
+        st.session_state['openai_client'] = None
         return False
     except Exception as e:
         st.error(f"An unexpected error occurred while checking OpenAI API key: {e}")
@@ -215,7 +231,7 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
     client_instance = st.session_state.get('openai_client')
 
     if client_instance is None or not st.session_state['openai_client_initialized']:
-        print("DEBUG: OpenAI client not initialized or missing.") # Debug print
+        append_debug_log("DEBUG: OpenAI client not initialized or missing.") # Debug print
         return "AI features are not enabled due to API key issues. Please check your OpenAI API key."
 
     try:
@@ -229,37 +245,55 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         # Add the current user prompt
         api_messages_history.append({"role": "user", "content": prompt})
 
-        print(f"DEBUG: Sending prompt to OpenAI (max_tokens=2000):\n{api_messages_history}\n---") # Debug print
-        response = client_instance.chat.completions.create( # Use client_instance here
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks) in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
-                *api_messages_history # Use the filtered history
-            ],
-            temperature=0.7,
-            max_tokens=2000, # Increased max_tokens for debugging
-            top_p=1.0,
-            frequency_penalty=0.0,
-            presence_penalty=0.0
-        )
-        ai_response_content = response.choices[0].message.content
-        print(f"DEBUG: Raw OpenAI response received:\n{ai_response_content}\n---") # Debug print
-        return ai_response_content
-    except AuthenticationError as e:
-        print(f"DEBUG: AuthenticationError: {e}") # Debug print
-        st.error("OpenAI API Key is invalid during chat. Please check your .streamlit/secrets.toml file.")
-        return "I'm sorry, my connection to the AI failed due to an invalid API key. Please contact support."
-    except APIConnectionError as e:
-        print(f"DEBUG: APIConnectionError: {e}") # Debug print
-        st.error(f"Could not connect to OpenAI API during chat: {e}. Please check your internet connection and firewall settings.")
-        return "I'm sorry, I'm having trouble connecting to the AI. Please check your internet connection and try again."
-    except RateLimitError as e:
-        print(f"DEBUG: RateLimitError: {e}") # Debug print
-        st.error("OpenAI API rate limit exceeded during chat. Please try again in a moment.")
-        return "I'm sorry, the AI is experiencing high demand. Please try again in a moment."
-    except Exception as e:
-        print(f"DEBUG: General Exception in generate_openai_response: {e}") # Debug print
-        st.error(f"An unexpected error occurred during AI response generation: {e}")
+        append_debug_log(f"DEBUG: Sending prompt to OpenAI (max_tokens=2000):\n{api_messages_history}\n---") # Debug print
+        
+        # --- NEW: More robust API call with specific error handling and timeout ---
+        try:
+            response = client_instance.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks) in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
+                    *api_messages_history
+                ],
+                temperature=0.7,
+                max_tokens=2000,
+                top_p=1.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                timeout=30 # Increased timeout to 30 seconds for API calls
+            )
+            ai_response_content = response.choices[0].message.content
+            append_debug_log(f"DEBUG: Raw OpenAI response received:\n{ai_response_content}\n---") # Debug print
+            return ai_response_content
+        except AuthenticationError as e:
+            append_debug_log(f"DEBUG: API Call AuthenticationError: {e}") # Debug print
+            st.error("OpenAI API Key is invalid during chat. Please check your .streamlit/secrets.toml file.")
+            return "I'm sorry, my connection to the AI failed due to an invalid API key. Please contact support."
+        except APIConnectionError as e:
+            append_debug_log(f"DEBUG: API Call ConnectionError: {e}") # Debug print
+            st.error(f"Could not connect to OpenAI API during chat: {e}. Please check your internet connection and firewall settings.")
+            return "I'm sorry, I'm having trouble connecting to the AI. Please check your internet connection and try again."
+        except RateLimitError as e:
+            append_debug_log(f"DEBUG: API Call RateLimitError: {e}") # Debug print
+            st.error("OpenAI API rate limit exceeded during chat. Please try again in a moment.")
+            return "I'm sorry, the AI is experiencing high demand. Please try again in a moment."
+        except requests.exceptions.Timeout as e: # Catch specific requests timeout
+            append_debug_log(f"DEBUG: API Call Timeout: {e}") # Debug print
+            st.error("OpenAI API request timed out. The server took too long to respond. Please try again.")
+            return "I'm sorry, the AI took too long to respond. Please try again in a moment."
+        except APIStatusError as e: # Catch API specific status errors (e.g., 4xx, 5xx from OpenAI)
+            append_debug_log(f"DEBUG: API Call Status Error: {e.status_code} - {e.response}") # Debug print
+            st.error(f"OpenAI API returned an error status: {e.status_code}. Please try again later.")
+            return f"I'm sorry, the AI encountered an error ({e.status_code}). Please try again later."
+        except Exception as e: # Catch any other unexpected errors during the API call
+            append_debug_log(f"DEBUG: Unexpected Exception during API call: {e}") # Debug print
+            st.error(f"An unexpected error occurred during AI API call: {e}")
+            st.exception(e) # Display the full traceback in the Streamlit UI for debugging
+            return "I'm sorry, an unexpected error occurred while communicating with the AI. Please try again later."
+
+    except Exception as e: # This outer catch block is for errors *before* the API call (e.g., client not initialized)
+        append_debug_log(f"DEBUG: General Exception in generate_openai_response (outer block): {e}") # Debug print
+        st.error(f"An unexpected error occurred while generating the AI response: {e}")
         st.exception(e) # Display the full traceback in the Streamlit UI for debugging
         return "I'm sorry, an unexpected error occurred while generating the AI response. Please try again later."
 
@@ -314,20 +348,29 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                     # Try to bold the first logical phrase (up to a colon, period, or end of line)
                     # This is for the AI's non-markdown bolding, if it produces it.
                     # It ensures the rest of the line is also added.
-                    phrase_to_bold_match = re.match(r'([^:\.\n]*)(.*)', rest_of_line)
-                    if phrase_to_bold_match:
-                        bold_text = phrase_to_bold_match.group(1).strip()
-                        remaining_text = phrase_to_bold_match.group(2)
-                        if bold_text:
-                            run = p.add_run(bold_text)
+                    # This regex is for finding markdown bolding within the rest_of_line
+                    parts = re.split(r'(\*\*.*?\*\*)', rest_of_line)
+                    for part in parts:
+                        if part is None or part == '':
+                            continue
+                        if part.startswith('**') and part.endswith('**'):
+                            run = p.add_run(part[2:-2])
                             run.bold = True
-                        p.add_run(remaining_text)
-                    else:
-                        # Fallback: if no specific phrase to bold, just add the whole rest of the line
-                        p.add_run(rest_of_line)
+                        else:
+                            p.add_run(part)
                 else:
                     # Not a numbered list item, just add as a regular paragraph
-                    p.add_run(line)
+                    # Also check for markdown bolding in regular paragraphs
+                    parts = re.split(r'(\*\*.*?\*\*)', line)
+                    for part in parts:
+                        if part is None or part == '':
+                            continue
+                        if part.startswith('**') and part.endswith('**'):
+                            run = p.add_run(part[2:-2])
+                            run.bold = True
+                        else:
+                            p.add_run(part)
+
         elif item_type == "table":
             # Original headers and rows from st.session_state['data_summary_table']
             original_headers = item.get("headers", []) # ['Column Name', 'Data Type', 'Missing %', 'Stats Summary']
@@ -496,16 +539,16 @@ def perform_statistical_test(df, test_type, col1, col2=None):
 
     try:
         if test_type == "anova":
-            print(f"DEBUG ANOVA: col1={col1}, col2={col2}")
-            print(f"DEBUG ANOVA: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
-            print(f"DEBUG ANOVA: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
+            append_debug_log(f"DEBUG ANOVA: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
+            append_debug_log(f"DEBUG ANOVA: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"ANOVA: Dependent variable '{col1}' must be numerical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"ANOVA: Independent variable '{col2}' must be categorical."
             else:
                 groups = [df[col1][df[col2] == g].dropna() for g in df[col2].unique()]
-                print(f"DEBUG ANOVA: unique_groups={df[col2].unique()}, len(groups)={len(groups)}")
+                append_debug_log(f"DEBUG ANOVA: unique_groups={df[col2].unique()}, len(groups)={len(groups)}")
                 if len(groups) < 2:
                     error_message = f"ANOVA: Independent variable '{col2}' needs at least 2 distinct groups."
                 elif any(len(g) == 0 for g in groups):
@@ -520,22 +563,23 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                     )
 
         elif test_type == "t_test":
-            print(f"DEBUG T-test: col1={col1}, col2={col2}")
-            print(f"DEBUG T-test: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
-            print(f"DEBUG T-test: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
+            append_debug_log(f"DEBUG T-test: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG T-test: df[col1].dtype={df[col1].dtype}, df[col2].dtype={df[col2].dtype}")
+            append_debug_log(f"DEBUG T-test: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
+            append_debug_log(f"DEBUG T-test: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"T-test: Numerical variable '{col1}' must be numerical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"T-test: Grouping variable '{col2}' must be categorical."
             else:
                 unique_groups = df[col2].unique()
-                print(f"DEBUG T-test: unique_groups={unique_groups}, len(unique_groups)={len(unique_groups)}")
+                append_debug_log(f"DEBUG T-test: unique_groups={unique_groups}, len(unique_groups)={len(unique_groups)}")
                 if len(unique_groups) != 2:
                     error_message = f"T-test: Grouping variable '{col2}' must have exactly 2 distinct groups. Found {len(unique_groups)}."
                 else:
                     group1_data = df[col1][df[col2] == unique_groups[0]].dropna()
                     group2_data = df[col1][df[col2] == unique_groups[1]].dropna()
-                    print(f"DEBUG T-test: group1_data_len={len(group1_data)}, group2_data_len={len(group2_data)}")
+                    append_debug_log(f"DEBUG T-test: group1_data_len={len(group1_data)}, group2_data_len={len(group2_data)}")
                     if len(group1_data) == 0 or len(group2_data) == 0:
                         error_message = f"T-test: One or both groups have no data for '{col1}' after dropping NaNs."
                     else:
@@ -548,16 +592,17 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         )
 
         elif test_type == "chi_squared":
-            print(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
-            print(f"DEBUG Chi-squared: is_categorical_dtype(col1)={pd.api.types.is_categorical_dtype(df[col1])} | is_object_dtype(col1)={pd.api.types.is_object_dtype(df[col1])} | is_string_dtype(col1)={pd.api.types.is_string_dtype(df[col1])}")
-            print(f"DEBUG Chi-squared: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
+            append_debug_log(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG Chi-squared: df[col1].dtype={df[col1].dtype}, df[col2].dtype={df[col2].dtype}")
+            append_debug_log(f"DEBUG Chi-squared: is_categorical_dtype(col1)={pd.api.types.is_categorical_dtype(df[col1])} | is_object_dtype(col1)={pd.api.types.is_object_dtype(df[col1])} | is_string_dtype(col1)={pd.api.types.is_string_dtype(df[col1])}")
+            append_debug_log(f"DEBUG Chi-squared: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
             if not (pd.api.types.is_object_dtype(df[col1]) or pd.api.types.is_string_dtype(df[col1]) or pd.api.types.is_categorical_dtype(df[col1])):
                 error_message = f"Chi-squared: Column 1 '{col1}' must be categorical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"Chi-squared: Column 2 '{col2}' must be categorical."
             else:
                 contingency_table = pd.crosstab(df[col1], df[col2])
-                print(f"DEBUG Chi-squared: contingency_table_shape={contingency_table.shape}, sum={contingency_table.sum().sum()}")
+                append_debug_log(f"DEBUG Chi-squared: contingency_table_shape={contingency_table.shape}, sum={contingency_table.sum().sum()}")
                 if contingency_table.empty or contingency_table.sum().sum() == 0:
                      error_message = f"Chi-squared: No valid data to form a contingency table for '{col1}' and '{col2}'."
                 else:
@@ -575,6 +620,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
     except Exception as e:
         error_message = f"An error occurred during the statistical test: {e}. Please check your column selections and data."
         st.exception(e) # Display traceback in UI for debugging
+        append_debug_log(f"DEBUG: Exception in perform_statistical_test: {e}") # Debug print
 
     return results_str, error_message
 
@@ -604,6 +650,7 @@ def main_app():
             st.session_state['report_content'] = [] # Clear report content for new file
             st.session_state['user_goal'] = "Not specified" # Reset user goal
             st.session_state['uploaded_file_name'] = uploaded_file.name # Store file name to detect new upload
+            st.session_state['debug_logs'] = [] # Clear debug logs for new file
 
             try:
                 if uploaded_file.name.endswith('.csv'):
@@ -635,7 +682,7 @@ def main_app():
                     "Based on this, what are the initial preprocessing considerations? "
                     "Please also ask the user about their primary goal (e.g., classification, regression, exploratory analysis) for this dataset."
                 )
-                print(f"DEBUG: Initial AI prompt:\n{initial_ai_prompt}\n---") # Debug print
+                append_debug_log(f"DEBUG: Initial AI prompt:\n{initial_ai_prompt}\n---") # Debug print
                 with st.spinner("Analyzing data and generating initial insights..."):
                     initial_response = generate_openai_response(initial_ai_prompt)
                     st.session_state.messages.append({"role": "assistant", "content": initial_response})
@@ -737,9 +784,9 @@ def main_app():
                             "Please provide a concise interpretation of what this graph tells us about the data, "
                             "especially in the context of data preprocessing. Do NOT provide code."
                         )
-                        print(f"DEBUG: Graph interpretation prompt:\n{interpretation_prompt}\n---") # Debug print
+                        append_debug_log(f"DEBUG: Graph interpretation prompt:\n{interpretation_prompt}\n---") # Debug print
                         ai_interpretation = generate_openai_response(interpretation_prompt)
-                        print(f"DEBUG: Graph interpretation response:\n{ai_interpretation}\n---") # Debug print
+                        append_debug_log(f"DEBUG: Graph interpretation response:\n{ai_interpretation}\n---") # Debug print
                         st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
                         
                         # Add graph and its interpretation to report content
@@ -808,9 +855,9 @@ def main_app():
                             "focusing on what the p-value means and the implications for the relationship between the variables. "
                             "Do NOT provide code or markdown formatting."
                         )
-                        print(f"DEBUG: Stat test interpretation prompt:\n{interpretation_prompt}\n---") # Debug print
+                        append_debug_log(f"DEBUG: Stat test interpretation prompt:\n{interpretation_prompt}\n---") # Debug print
                         ai_interpretation = generate_openai_response(interpretation_prompt)
-                        print(f"DEBUG: Stat test interpretation response:\n{ai_interpretation}\n---") # Debug print
+                        append_debug_log(f"DEBUG: Stat test interpretation response:\n{ai_interpretation}\n---") # Debug print
                         st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
                         st.session_state.report_content.append({"type": "text", "content": ai_interpretation})
                 st.rerun()
@@ -837,7 +884,7 @@ def main_app():
                 "including explanations. Do NOT provide Python code snippets. "
                 "If the user has stated a goal, ensure your advice aligns with it."
             )
-            print(f"DEBUG: General chat prompt:\n{full_prompt}\n---") # Debug print
+            append_debug_log(f"DEBUG: General chat prompt:\n{full_prompt}\n---") # Debug print
             with st.spinner("Generating response..."):
                 response = generate_openai_response(full_prompt)
                 st.session_state.messages.append({"role": "assistant", "content": response})
@@ -852,6 +899,7 @@ def main_app():
         st.session_state['messages'] = []
         st.session_state['report_content'] = []
         st.session_state['user_goal'] = "Not specified"
+        st.session_state['debug_logs'] = [] # Clear debug logs on chat reset
         # If a file is uploaded, re-trigger initial analysis
         if st.session_state['df'] is not None:
             summary_text, summary_table = get_data_summary(st.session_state['df'])
@@ -872,7 +920,7 @@ def main_app():
                 "Based on this, what are the initial preprocessing considerations? "
                 "Please also ask the user about their primary goal (e.g., classification, regression, exploratory analysis) for this dataset."
             )
-            print(f"DEBUG: Reset chat initial AI prompt:\n{initial_ai_prompt}\n---") # Debug print
+            append_debug_log(f"DEBUG: Reset chat initial AI prompt:\n{initial_ai_prompt}\n---") # Debug print
             with st.spinner("Analyzing data and generating initial insights..."):
                 initial_response = generate_openai_response(initial_ai_prompt)
                 st.session_state.messages.append({"role": "assistant", "content": initial_response})
@@ -906,21 +954,14 @@ def main_app():
         unsafe_allow_html=True
     )
 
-    # Logout button in sidebar (placed after footer for consistent sidebar flow)
-    if st.sidebar.button("Logout"):
-        st.session_state['logged_in'] = False
-        st.session_state['current_username'] = None
-        st.session_state['df'] = None
-        st.session_state['data_summary_text'] = ""
-        st.session_state['data_summary_table'] = []
-        st.session_state['messages'] = []
-        st.session_state['report_content'] = []
-        st.session_state['user_goal'] = "Not specified"
-        if 'uploaded_file_name' in st.session_state:
-            del st.session_state['uploaded_file_name']
-        st.session_state['openai_client_initialized'] = False # Reset OpenAI client status on logout
-        st.session_state['openai_client'] = None # Clear OpenAI client instance on logout
-        st.rerun()
+    # --- In-App Debug Logs ---
+    st.expander_debug = st.expander("Show Debug Logs")
+    with st.expander_debug:
+        if st.button("Clear Debug Logs"):
+            st.session_state['debug_logs'] = []
+            st.rerun()
+        for log_entry in st.session_state['debug_logs']:
+            st.code(log_entry, language='text')
 
 # --- Run the App ---
 if not st.session_state['logged_in']:
