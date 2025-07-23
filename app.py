@@ -825,13 +825,20 @@ def main_app():
             stat_col2 = st.sidebar.selectbox("Categorical Variable 2:", ["Select column"] + all_columns, key="chi2_cat2_col")
         
         if st.sidebar.button(f"Run {selected_test}"):
+            append_debug_log(f"DEBUG: Button '{selected_test}' clicked.")
+            append_debug_log(f"DEBUG: selected_test='{selected_test}', stat_col1='{stat_col1}', stat_col2='{stat_col2}'")
+
             if selected_test == "Select a test":
+                append_debug_log("DEBUG: Warning: 'Select a test' triggered.")
                 st.sidebar.warning("Please select a statistical test to run.")
             elif stat_col1 == "Select column" or (selected_test != "Chi-squared Test" and stat_col2 == "Select column"):
-                 st.sidebar.warning("Please select all required columns for the chosen test.")
+                append_debug_log("DEBUG: Warning: 'Select column' for stat_col1 or stat_col2 triggered.")
+                st.sidebar.warning("Please select all required columns for the chosen test.")
             elif selected_test == "Chi-squared Test" and stat_col2 == "Select column": # Specific check for Chi-squared
-                 st.sidebar.warning("Please select both categorical columns for the Chi-squared test.")
+                append_debug_log("DEBUG: Warning: 'Select column' for Chi-squared stat_col2 triggered.")
+                st.sidebar.warning("Please select both categorical columns for the Chi-squared test.")
             else:
+                append_debug_log(f"DEBUG: Calling perform_statistical_test for {selected_test} with {stat_col1}, {stat_col2}")
                 with st.spinner(f"Running {selected_test}..."):
                     test_results_str, test_error = perform_statistical_test(
                         st.session_state['df'], 
@@ -957,7 +964,7 @@ def main_app():
     # --- In-App Debug Logs ---
     st.expander_debug = st.expander("Show Debug Logs")
     with st.expander_debug:
-        if st.button("Clear Debug Logs"):
+        if st.button("Clear Debug Logs", key="clear_debug_logs_button"):
             st.session_state['debug_logs'] = []
             st.rerun()
         for log_entry in st.session_state['debug_logs']:
