@@ -389,7 +389,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
         if test_type == "anova":
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"ANOVA: Dependent variable '{col1}' must be numerical."
-            elif not pd.api.types.is_object_dtype(df[col2]) and not pd.api.types.is_string_dtype(df[col2]) and not pd.api.types.is_categorical_dtype(df[col2]):
+            elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"ANOVA: Independent variable '{col2}' must be categorical."
             else:
                 groups = [df[col1][df[col2] == g].dropna() for g in df[col2].unique()]
@@ -409,7 +409,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
         elif test_type == "t_test":
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"T-test: Numerical variable '{col1}' must be numerical."
-            elif not pd.api.types.is_object_dtype(df[col2]) and not pd.api.types.is_string_dtype(df[col2]) and not pd.api.types.is_categorical_dtype(df[col2]):
+            elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"T-test: Grouping variable '{col2}' must be categorical."
             else:
                 unique_groups = df[col2].unique()
@@ -615,16 +615,19 @@ def main_app():
 
         if selected_test == "ANOVA":
             st.sidebar.info("ANOVA: Compares means of a numerical variable across 2+ categories.")
-            stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + numerical_columns, key="anova_num_col")
-            stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + categorical_columns, key="anova_cat_col")
+            # Changed to all_columns based on user feedback
+            stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + all_columns, key="anova_num_col")
+            stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + all_columns, key="anova_cat_col")
         elif selected_test == "Independent T-test":
             st.sidebar.info("T-test: Compares means of a numerical variable between 2 groups.")
-            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="ttest_num_col")
-            stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ttest_cat_col")
+            # Changed to all_columns based on user feedback
+            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + all_columns, key="ttest_num_col")
+            stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + all_columns, key="ttest_cat_col")
         elif selected_test == "Chi-squared Test":
             st.sidebar.info("Chi-squared: Tests association between two categorical variables.")
-            stat_col1 = st.sidebar.selectbox("Categorical Variable 1:", ["Select column"] + categorical_columns, key="chi2_cat1_col")
-            stat_col2 = st.sidebar.selectbox("Categorical Variable 2:", ["Select column"] + categorical_columns, key="chi2_cat2_col")
+            # Changed to all_columns based on user feedback
+            stat_col1 = st.sidebar.selectbox("Categorical Variable 1:", ["Select column"] + all_columns, key="chi2_cat1_col")
+            stat_col2 = st.sidebar.selectbox("Categorical Variable 2:", ["Select column"] + all_columns, key="chi2_cat2_col")
         
         if st.sidebar.button(f"Run {selected_test}"):
             if selected_test == "Select a test":
