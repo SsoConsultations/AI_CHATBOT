@@ -9,6 +9,8 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_SECTION_START
+from docx.oxml.ns import qn # For setting table style
+from docx.oxml import OxmlElement # For setting table style
 import matplotlib.pyplot as plt
 import seaborn as sns
 import re # For parsing graph requests and markdown bolding
@@ -24,7 +26,8 @@ from scipy import stats # For statistical tests
 # [credentials]
 # user1 = "User1@123"
 # user2 = "User2@123"
-# "ssoconsultants14@gmail.com" = "Sso@123"
+# "ssoconsultants14@gmail.com" = "Sso@122" # Corrected password for ssoconsultants14@gmail.com
+
 
 # Load secrets
 try:
@@ -134,7 +137,7 @@ def check_openai_api_key():
         return False
     except RateLimitError:
         st.error("OpenAI API rate limit exceeded. Please try again later or check your OpenAI usage.")
-        st.session_state['openai_client'] = None # Clear client on failure
+        st.session_session['openai_client'] = None # Clear client on failure
         return False
     except requests.exceptions.Timeout:
         st.error("OpenAI API connection timed out during key verification. Please try again.")
@@ -345,9 +348,6 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                     # Get the rest of the line after the number
                     rest_of_line = numbered_list_match.group(2)
                     
-                    # Try to bold the first logical phrase (up to a colon, period, or end of line)
-                    # This is for the AI's non-markdown bolding, if it produces it.
-                    # It ensures the rest of the line is also added.
                     # This regex is for finding markdown bolding within the rest_of_line
                     parts = re.split(r'(\*\*.*?\*\*)', rest_of_line)
                     for part in parts:
@@ -416,18 +416,15 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                     original_dtype = row_data[1]
                     # Get short form, default to 'other' if not in map
                     short_dtype = dtype_map.get(original_dtype, 'other') 
-                    missing_percent = row_data[2]
-                    stats_summary = row_data[3]
-
-                    # Combine column name and short data type for the first cell
                     combined_col_info = f"{col_name}\n({short_dtype})"
                     
                     # Create the new row for the Word table
-                    new_row_for_table = [combined_col_info, missing_percent, stats_summary]
+                    new_row_for_table = [combined_col_info, row_data[2], row_data[3]] # Use original missing % and stats summary
 
                     row_cells = table.add_row().cells
                     for i, cell_data in enumerate(new_row_for_table):
                         row_cells[i].text = str(cell_data)
+
         elif item_type == "image":
             # Image data is expected as BytesIO object
             try:
@@ -440,6 +437,30 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
             except Exception as e:
                 document.add_paragraph(f"Error adding image to report: {e}")
         
+        elif item_type == "stat_table": # NEW: For structured statistical tables
+            table_title = item.get("title")
+            df_to_add = item.get("dataframe")
+
+            if table_title and df_to_add is not None:
+                document.add_paragraph(table_title, style='Heading 4') # Use a sub-heading for the table
+                
+                # Create a new table in the document
+                table = document.add_table(rows=df_to_add.shape[0] + 1, cols=df_to_add.shape[1])
+                table.style = 'Table Grid' # Apply a basic table style
+
+                # Add header row
+                for i, col_name in enumerate(df_to_add.columns):
+                    cell = table.cell(0, i)
+                    cell.text = str(col_name)
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.bold = True
+
+                # Add data rows
+                for r_idx, row_data in enumerate(df_to_add.itertuples(index=False), start=1):
+                    for c_idx, cell_value in enumerate(row_data):
+                        table.cell(r_idx, c_idx).text = str(f"{cell_value:.4f}" if isinstance(cell_value, (float)) else cell_value)
+            
         document.add_paragraph("\n") # Add a blank line after each section for spacing
 
     # Add a section for the footer in the report
@@ -532,9 +553,13 @@ def generate_and_display_graph(df, graph_type, columns):
 
 def perform_statistical_test(df, test_type, col1, col2=None):
     """
-    Performs the selected statistical test and returns the results as a formatted string.
+    Performs the selected statistical test and returns the results as a formatted string
+    and optionally a pandas DataFrame for structured output.
+    Returns (results_str, results_df, error_message).
+    results_df will be None if not applicable or on error.
     """
     results_str = ""
+    results_df = None # New: To hold structured results for display
     error_message = None
 
     try:
@@ -562,36 +587,56 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         "Interpretation will be provided by the AI."
                     )
 
-        elif test_type == "independent_t_test": # FIXED: Changed from "t_test"
+        elif test_type == "independent_t_test":
             append_debug_log(f"DEBUG T-test: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG T-test: df[col1].dtype={df[col1].dtype}, df[col2].dtype={df[col2].dtype}")
             append_debug_log(f"DEBUG T-test: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
             append_debug_log(f"DEBUG T-test: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
-                error_message = f"T-test: Numerical variable '{col1}' must be numerical."
+                error_message = f"Independent T-test: Numerical variable '{col1}' must be numerical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
-                error_message = f"T-test: Grouping variable '{col2}' must be categorical."
+                error_message = f"Independent T-test: Grouping variable '{col2}' must be categorical."
             else:
                 unique_groups = df[col2].unique()
                 append_debug_log(f"DEBUG T-test: unique_groups={unique_groups}, len(unique_groups)={len(unique_groups)}")
                 if len(unique_groups) != 2:
-                    error_message = f"T-test: Grouping variable '{col2}' must have exactly 2 distinct groups. Found {len(unique_groups)}."
+                    error_message = f"Independent T-test: Grouping variable '{col2}' must have exactly 2 distinct groups. Found {len(unique_groups)}."
                 else:
-                    group1_data = df[col1][df[col2] == unique_groups[0]].dropna()
-                    group2_data = df[col1][df[col2] == unique_groups[1]].dropna()
+                    group1_name = unique_groups[0]
+                    group2_name = unique_groups[1]
+                    group1_data = df[col1][df[col2] == group1_name].dropna()
+                    group2_data = df[col1][df[col2] == group2_name].dropna()
                     append_debug_log(f"DEBUG T-test: group1_data_len={len(group1_data)}, group2_data_len={len(group2_data)}")
                     if len(group1_data) == 0 or len(group2_data) == 0:
-                        error_message = f"T-test: One or both groups have no data for '{col1}' after dropping NaNs."
+                        error_message = f"Independent T-test: One or both groups have no data for '{col1}' after dropping NaNs."
                     else:
                         t_statistic, p_value = stats.ttest_ind(group1_data, group2_data)
+                        
+                        # Prepare structured results (Excel-like output)
+                        group_stats_data = {
+                            'Group': [group1_name, group2_name],
+                            'N': [len(group1_data), len(group2_data)],
+                            'Mean': [group1_data.mean(), group2_data.mean()],
+                            'Std. Deviation': [group1_data.std(), group2_data.std()]
+                        }
+                        results_df = pd.DataFrame(group_stats_data)
+
+                        test_results_data = {
+                            'Statistic': ['T-statistic', 'P-value'],
+                            'Value': [t_statistic, p_value]
+                        }
+                        test_results_df = pd.DataFrame(test_results_data)
+
                         results_str = (
-                            f"Independent T-test Results for '{col1}' by '{col2}' ({unique_groups[0]} vs {unique_groups[1]}):\n"
+                            f"Independent T-test Results for '{col1}' by '{col2}' ({group1_name} vs {group2_name}):\n"
                             f"  T-statistic: {t_statistic:.4f}\n"
                             f"  P-value: {p_value:.4f}\n"
                             "Interpretation will be provided by the AI."
                         )
+                        # Store both dataframes in a tuple, results_str is still the primary return
+                        return results_str, (results_df, test_results_df), error_message # Return structured data
 
-        elif test_type == "chi_squared_test": # FIXED: Changed from "chi_squared"
+        elif test_type == "chi_squared_test":
             append_debug_log(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Chi-squared: df[col1].dtype={df[col1].dtype}, df[col2].dtype={df[col2].dtype}")
             append_debug_log(f"DEBUG Chi-squared: is_categorical_dtype(col1)={pd.api.types.is_categorical_dtype(df[col1])} | is_object_dtype(col1)={pd.api.types.is_object_dtype(df[col1])} | is_string_dtype(col1)={pd.api.types.is_string_dtype(df[col1])}")
@@ -614,6 +659,14 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         f"  Degrees of Freedom (dof): {dof}\n"
                         "Interpretation will be provided by the AI."
                     )
+        
+        # --- NEW STATISTICAL TESTS (TEMPORARILY REMOVED FOR DEMO) ---
+        # elif test_type == "paired_t_test":
+        #     ...
+        # elif test_type == "pearson_correlation":
+        #     ...
+        # elif test_type == "spearman_rank_correlation":
+        #     ...
         else:
             error_message = "Unsupported statistical test type selected."
 
@@ -622,7 +675,8 @@ def perform_statistical_test(df, test_type, col1, col2=None):
         st.exception(e) # Display traceback in UI for debugging
         append_debug_log(f"DEBUG: Exception in perform_statistical_test: {e}") # Debug print
 
-    return results_str, error_message
+    # Ensure results_df is None if not specifically set (e.g., for ANOVA or Chi-squared in this demo)
+    return results_str, results_df, error_message # Updated return signature
 
 # --- Main Application Logic ---
 def main_app():
@@ -729,6 +783,8 @@ def main_app():
             with st.chat_message(message["role"]):
                 if message["role"] == "graph" and "content" in message:
                     st.image(message["content"], caption=message.get("caption", ""), use_container_width=True)
+                elif message["role"] == "dataframe" and "content" in message: # NEW: Handle dataframe messages
+                    st.dataframe(message["content"])
                 else:
                     st.markdown(message["content"])
 
@@ -802,7 +858,16 @@ def main_app():
         st.sidebar.markdown("---")
         st.sidebar.header("Perform Statistical Tests")
 
-        test_options = ["Select a test", "ANOVA", "Independent T-test", "Chi-squared Test"]
+        # Temporarily limiting options for demo
+        test_options = [
+            "Select a test", 
+            "ANOVA", 
+            "Independent T-test", 
+            "Chi-squared Test"
+            # "Paired T-test", # New
+            # "Pearson Correlation", # New
+            # "Spearman Rank Correlation" # New
+        ]
         selected_test = st.sidebar.selectbox("Choose Statistical Test:", test_options, key="stat_test_select")
 
         stat_col1 = None
@@ -810,17 +875,14 @@ def main_app():
 
         if selected_test == "ANOVA":
             st.sidebar.info("ANOVA: Compares means of a numerical variable across 2+ categories.")
-            # Changed to all_columns based on user feedback
             stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + all_columns, key="anova_num_col")
             stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + all_columns, key="anova_cat_col")
         elif selected_test == "Independent T-test":
             st.sidebar.info("T-test: Compares means of a numerical variable between 2 groups.")
-            # Changed to all_columns based on user feedback
             stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + all_columns, key="ttest_num_col")
             stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + all_columns, key="ttest_cat_col")
         elif selected_test == "Chi-squared Test":
             st.sidebar.info("Chi-squared: Tests association between two categorical variables.")
-            # Changed to all_columns based on user feedback
             stat_col1 = st.sidebar.selectbox("Categorical Variable 1:", ["Select column"] + all_columns, key="chi2_cat1_col")
             stat_col2 = st.sidebar.selectbox("Categorical Variable 2:", ["Select column"] + all_columns, key="chi2_cat2_col")
         
@@ -828,21 +890,22 @@ def main_app():
             append_debug_log(f"DEBUG: Button '{selected_test}' clicked.")
             append_debug_log(f"DEBUG: selected_test='{selected_test}', stat_col1='{stat_col1}', stat_col2='{stat_col2}'")
 
+            # Validate column selections for new tests
             if selected_test == "Select a test":
                 append_debug_log("DEBUG: Warning: 'Select a test' triggered.")
                 st.sidebar.warning("Please select a statistical test to run.")
-            elif stat_col1 == "Select column" or (selected_test != "Chi-squared Test" and stat_col2 == "Select column"):
+            elif stat_col1 == "Select column" or stat_col2 == "Select column": # Simplified check for all 2-column tests
                 append_debug_log("DEBUG: Warning: 'Select column' for stat_col1 or stat_col2 triggered.")
                 st.sidebar.warning("Please select all required columns for the chosen test.")
-            elif selected_test == "Chi-squared Test" and stat_col2 == "Select column": # Specific check for Chi-squared
-                append_debug_log("DEBUG: Warning: 'Select column' for Chi-squared stat_col2 triggered.")
-                st.sidebar.warning("Please select both categorical columns for the Chi-squared test.")
             else:
                 append_debug_log(f"DEBUG: Calling perform_statistical_test for {selected_test} with {stat_col1}, {stat_col2}")
                 with st.spinner(f"Running {selected_test}..."):
-                    test_results_str, test_error = perform_statistical_test(
+                    # Convert selected_test to the internal snake_case string used in perform_statistical_test
+                    internal_test_type = selected_test.lower().replace(" ", "_").replace("-", "_")
+                    
+                    test_results_str, structured_results_df, test_error = perform_statistical_test( # Updated return
                         st.session_state['df'], 
-                        selected_test.lower().replace(" ", "_").replace("-", "_"), # Convert to snake_case
+                        internal_test_type, 
                         stat_col1, 
                         stat_col2
                     )
@@ -853,6 +916,18 @@ def main_app():
                         st.session_state.messages.append({"role": "assistant", "content": test_results_str})
                         st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Statistical Test: {selected_test}"})
                         st.session_state.report_content.append({"type": "text", "content": test_results_str})
+
+                        # NEW: Display structured results in UI and add to report
+                        if selected_test == "Independent T-test" and structured_results_df is not None:
+                            group_stats_df, test_stats_df = structured_results_df # Unpack the tuple
+                            st.subheader("Group Statistics")
+                            st.dataframe(group_stats_df)
+                            st.subheader("Test Results")
+                            st.dataframe(test_stats_df)
+
+                            st.session_state.report_content.append({"type": "stat_table", "title": "Group Statistics", "dataframe": group_stats_df})
+                            st.session_state.report_content.append({"type": "stat_table", "title": "Test Results", "dataframe": test_stats_df})
+
 
                         # Get AI interpretation of the test results
                         interpretation_prompt = (
