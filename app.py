@@ -130,7 +130,7 @@ def check_openai_api_key():
         return False
     except Exception as e:
         st.error(f"An unexpected error occurred while checking OpenAI API key: {e}")
-        st.session_session['openai_client'] = None # Clear client on failure
+        st.session_state['openai_client'] = None # Clear client on failure
         return False
 
 
@@ -408,6 +408,81 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
     bio.seek(0) # Rewind the buffer to the beginning
     return bio
 
+def generate_and_display_graph(df, graph_type, columns):
+    """
+    Generates a graph (histogram, box plot, scatter plot, correlation heatmap, bar chart)
+    and returns its BytesIO buffer and a description.
+    """
+    img_buffer = io.BytesIO()
+    graph_desc = ""
+    plt.figure(figsize=(10, 6)) # Set a default figure size
+
+    try:
+        if graph_type == "histogram":
+            if not columns or not pd.api.types.is_numeric_dtype(df[columns[0]]):
+                return None, "Unsupported graph type requested or invalid column for histogram. Please select a numerical column."
+            sns.histplot(df[columns[0]].dropna(), kde=True)
+            plt.title(f'Histogram of {columns[0]}')
+            plt.xlabel(columns[0])
+            plt.ylabel('Frequency')
+            graph_desc = f"A histogram for the '{columns[0]}' column was generated. It shows the distribution of values for this numerical feature."
+        
+        elif graph_type == "box_plot":
+            if not columns or not pd.api.types.is_numeric_dtype(df[columns[0]]):
+                return None, "Unsupported graph type requested or invalid column for box plot. Please select a numerical column."
+            sns.boxplot(y=df[columns[0]].dropna())
+            plt.title(f'Box Plot of {columns[0]}')
+            plt.ylabel(columns[0])
+            graph_desc = f"A box plot for the '{columns[0]}' column was generated. It displays the distribution, median, quartiles, and potential outliers of this numerical feature."
+
+        elif graph_type == "scatter_plot":
+            if len(columns) != 2 or not pd.api.types.is_numeric_dtype(df[columns[0]]) or not pd.api.types.is_numeric_dtype(df[columns[1]]):
+                return None, "Unsupported graph type requested or invalid columns for scatter plot. Please select two numerical columns."
+            sns.scatterplot(x=df[columns[0]], y=df[columns[1]])
+            plt.title(f'Scatter Plot of {columns[0]} vs {columns[1]}')
+            plt.xlabel(columns[0])
+            plt.ylabel(columns[1])
+            graph_desc = f"A scatter plot of '{columns[0]}' versus '{columns[1]}' was generated. It visualizes the relationship between these two numerical features."
+
+        elif graph_type == "correlation_heatmap":
+            numerical_cols = df.select_dtypes(include=['number']).columns
+            if numerical_cols.empty:
+                return None, "No numerical columns found to generate a correlation heatmap."
+            correlation_matrix = df[numerical_cols].corr()
+            sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt=".2f")
+            plt.title("Correlation Matrix of Numerical Features")
+            graph_desc = "A correlation heatmap of all numerical features was generated. It displays the pairwise correlation coefficients, indicating the strength and direction of linear relationships between variables."
+
+        elif graph_type == "bar_chart":
+            if not columns or not (pd.api.types.is_object_dtype(df[columns[0]]) or pd.api.types.is_string_dtype(df[columns[0]]) or pd.api.types.is_categorical_dtype(df[columns[0]])):
+                return None, "Unsupported graph type requested or invalid column for bar chart. Please select a categorical column."
+            
+            # For bar charts, limit to top 10 categories to avoid clutter
+            value_counts = df[columns[0]].value_counts().head(10)
+            if value_counts.empty:
+                return None, f"No data found for bar chart in column '{columns[0]}'."
+
+            sns.barplot(x=value_counts.index, y=value_counts.values)
+            plt.title(f'Frequency of {columns[0]} (Top {len(value_counts)})')
+            plt.xlabel(columns[0])
+            plt.ylabel('Count')
+            plt.xticks(rotation=45, ha='right') # Rotate labels for readability
+            plt.tight_layout() # Adjust layout to prevent labels overlapping
+            graph_desc = f"A bar chart showing the frequency of top categories in '{columns[0]}' was generated. It helps visualize the distribution of categorical values."
+        
+        else:
+            return None, "Unsupported graph type requested. Please ask for a histogram, box plot, scatter plot, correlation heatmap, or bar chart."
+
+        plt.savefig(img_buffer, format='png', bbox_inches='tight') # Save to buffer
+        img_buffer.seek(0) # Rewind the buffer
+        plt.close() # Close the plot to free memory
+        return img_buffer, graph_desc
+
+    except Exception as e:
+        plt.close() # Ensure plot is closed even on error
+        return None, f"An error occurred while generating the graph: {e}. Please check your column selections and data."
+
+
 def perform_statistical_test(df, test_type, col1, col2=None):
     """
     Performs the selected statistical test and returns the results as a formatted string.
@@ -566,7 +641,7 @@ def main_app():
             'category': 'str',
             'datetime64[ns]': 'date',
             'datetime64': 'date',
-            'bool': 'bool'
+            'bool': 'bool' # Boolean type
         }
 
         # Create a copy of the DataFrame to modify column names for display
