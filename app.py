@@ -294,50 +294,40 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
             run = heading.add_run(content)
             run.bold = True # Ensure headings are bold
         elif item_type == "text":
-            # Process text to bold numbered list items and markdown bolding
+            # REVISED LOGIC FOR TEXT CONTENT TO HANDLE NUMBERED LISTS PROPERLY
             lines = content.split('\n')
             for line in lines:
-                p = document.add_paragraph()
-                # Pattern to capture:
-                # 1. Start of line with a digit and a dot (e.g., "1. ")
-                # 2. Text enclosed in double asterisks (e.g., **bold text**)
-                # Split by these, keeping the delimiters.
-                # Regex explanation:
-                # (^\d+\.\s+): Captures "1. " at the start of a line. Group 1.
-                # | : OR
-                # (\*\*.*?\*\*): Captures text between ** **. Group 2.
-                parts = re.split(r'(^\d+\.\s+)|(\*\*.*?\*\*)', line)
-                
-                for i, part in enumerate(parts):
-                    if part is None or part == '':
-                        continue # Skip empty parts from split
+                line = line.strip() # Remove leading/trailing whitespace
+                if not line: # Skip empty lines
+                    continue
 
-                    if re.match(r'^\d+\.\s+', part):
-                        # This is a numbered list prefix like "1. ", "2. "
-                        # The next part in 'parts' list should be the actual content
-                        p.add_run(part) # Add the "1. " part as normal
-                        # Check if there's content after the number and if it's not another delimiter
-                        if i + 1 < len(parts) and parts[i+1] is not None and not re.match(r'^\d+\.\s+|$', parts[i+1]):
-                            # Try to bold the first phrase of the list item
-                            # This regex captures text up to a colon, period, or end of line/string
-                            phrase_to_bold_match = re.match(r'([^:\.\n]*)(.*)', parts[i+1]) 
-                            if phrase_to_bold_match:
-                                bold_text = phrase_to_bold_match.group(1).strip()
-                                rest_of_line = phrase_to_bold_match.group(2)
-                                if bold_text: # Only bold if there's actual text to bold
-                                    run = p.add_run(bold_text)
-                                    run.bold = True
-                                p.add_run(rest_of_line) # Add the rest of the line
-                            else:
-                                p.add_run(parts[i+1]) # Fallback if no boldable phrase found
-                        break # Processed this line, move to next
-                    elif part.startswith('**') and part.endswith('**'):
-                        # This is a markdown bolded part
-                        run = p.add_run(part[2:-2])
-                        run.bold = True
+                p = document.add_paragraph()
+                # Check if it's a numbered list item
+                numbered_list_match = re.match(r'^(\d+\.\s*)(.*)', line)
+                if numbered_list_match:
+                    # Add the number part (e.g., "1. ")
+                    p.add_run(numbered_list_match.group(1))
+                    
+                    # Get the rest of the line after the number
+                    rest_of_line = numbered_list_match.group(2)
+                    
+                    # Try to bold the first logical phrase (up to a colon, period, or end of line)
+                    # This is for the AI's non-markdown bolding, if it produces it.
+                    # It ensures the rest of the line is also added.
+                    phrase_to_bold_match = re.match(r'([^:\.\n]*)(.*)', rest_of_line)
+                    if phrase_to_bold_match:
+                        bold_text = phrase_to_bold_match.group(1).strip()
+                        remaining_text = phrase_to_bold_match.group(2)
+                        if bold_text:
+                            run = p.add_run(bold_text)
+                            run.bold = True
+                        p.add_run(remaining_text)
                     else:
-                        # This is plain text
-                        p.add_run(part)
+                        # Fallback: if no specific phrase to bold, just add the whole rest of the line
+                        p.add_run(rest_of_line)
+                else:
+                    # Not a numbered list item, just add as a regular paragraph
+                    p.add_run(line)
         elif item_type == "table":
             # Original headers and rows from st.session_state['data_summary_table']
             original_headers = item.get("headers", []) # ['Column Name', 'Data Type', 'Missing %', 'Stats Summary']
@@ -506,12 +496,16 @@ def perform_statistical_test(df, test_type, col1, col2=None):
 
     try:
         if test_type == "anova":
+            print(f"DEBUG ANOVA: col1={col1}, col2={col2}")
+            print(f"DEBUG ANOVA: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
+            print(f"DEBUG ANOVA: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"ANOVA: Dependent variable '{col1}' must be numerical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"ANOVA: Independent variable '{col2}' must be categorical."
             else:
                 groups = [df[col1][df[col2] == g].dropna() for g in df[col2].unique()]
+                print(f"DEBUG ANOVA: unique_groups={df[col2].unique()}, len(groups)={len(groups)}")
                 if len(groups) < 2:
                     error_message = f"ANOVA: Independent variable '{col2}' needs at least 2 distinct groups."
                 elif any(len(g) == 0 for g in groups):
@@ -526,17 +520,22 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                     )
 
         elif test_type == "t_test":
+            print(f"DEBUG T-test: col1={col1}, col2={col2}")
+            print(f"DEBUG T-test: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
+            print(f"DEBUG T-test: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"T-test: Numerical variable '{col1}' must be numerical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"T-test: Grouping variable '{col2}' must be categorical."
             else:
                 unique_groups = df[col2].unique()
+                print(f"DEBUG T-test: unique_groups={unique_groups}, len(unique_groups)={len(unique_groups)}")
                 if len(unique_groups) != 2:
                     error_message = f"T-test: Grouping variable '{col2}' must have exactly 2 distinct groups. Found {len(unique_groups)}."
                 else:
                     group1_data = df[col1][df[col2] == unique_groups[0]].dropna()
                     group2_data = df[col1][df[col2] == unique_groups[1]].dropna()
+                    print(f"DEBUG T-test: group1_data_len={len(group1_data)}, group2_data_len={len(group2_data)}")
                     if len(group1_data) == 0 or len(group2_data) == 0:
                         error_message = f"T-test: One or both groups have no data for '{col1}' after dropping NaNs."
                     else:
@@ -549,12 +548,16 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         )
 
         elif test_type == "chi_squared":
+            print(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
+            print(f"DEBUG Chi-squared: is_categorical_dtype(col1)={pd.api.types.is_categorical_dtype(df[col1])} | is_object_dtype(col1)={pd.api.types.is_object_dtype(df[col1])} | is_string_dtype(col1)={pd.api.types.is_string_dtype(df[col1])}")
+            print(f"DEBUG Chi-squared: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
             if not (pd.api.types.is_object_dtype(df[col1]) or pd.api.types.is_string_dtype(df[col1]) or pd.api.types.is_categorical_dtype(df[col1])):
                 error_message = f"Chi-squared: Column 1 '{col1}' must be categorical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"Chi-squared: Column 2 '{col2}' must be categorical."
             else:
                 contingency_table = pd.crosstab(df[col1], df[col2])
+                print(f"DEBUG Chi-squared: contingency_table_shape={contingency_table.shape}, sum={contingency_table.sum().sum()}")
                 if contingency_table.empty or contingency_table.sum().sum() == 0:
                      error_message = f"Chi-squared: No valid data to form a contingency table for '{col1}' and '{col2}'."
                 else:
@@ -738,6 +741,8 @@ def main_app():
                         ai_interpretation = generate_openai_response(interpretation_prompt)
                         print(f"DEBUG: Graph interpretation response:\n{ai_interpretation}\n---") # Debug print
                         st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
+                        
+                        # Add graph and its interpretation to report content
                         st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Graph Generated: {selected_graph_type}"})
                         st.session_state.report_content.append({"type": "image", "content": img_buffer, "caption": graph_desc})
                         st.session_state.report_content.append({"type": "text", "content": ai_interpretation}) # Add interpretation to report
