@@ -137,7 +137,7 @@ def check_openai_api_key():
         return False
     except RateLimitError:
         st.error("OpenAI API rate limit exceeded. Please try again later or check your OpenAI usage.")
-        st.session_session['openai_client'] = None # Clear client on failure
+        st.session_state['openai_client'] = None # Clear client on failure
         return False
     except requests.exceptions.Timeout:
         st.error("OpenAI API connection timed out during key verification. Please try again.")
@@ -459,6 +459,7 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                 # Add data rows
                 for r_idx, row_data in enumerate(df_to_add.itertuples(index=False), start=1):
                     for c_idx, cell_value in enumerate(row_data):
+                        # Format floats to 4 decimal places
                         table.cell(r_idx, c_idx).text = str(f"{cell_value:.4f}" if isinstance(cell_value, (float)) else cell_value)
             
         document.add_paragraph("\n") # Add a blank line after each section for spacing
@@ -556,10 +557,10 @@ def perform_statistical_test(df, test_type, col1, col2=None):
     Performs the selected statistical test and returns the results as a formatted string
     and optionally a pandas DataFrame for structured output.
     Returns (results_str, results_df, error_message).
-    results_df will be None if not applicable or on error.
+    results_df will be None if not applicable or on error, or a tuple of DataFrames for T-test.
     """
     results_str = ""
-    results_df = None # New: To hold structured results for display
+    structured_results_for_ui = None # New: To hold structured results for UI display (e.g., tuple of DFs)
     error_message = None
 
     try:
@@ -619,7 +620,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                             'Mean': [group1_data.mean(), group2_data.mean()],
                             'Std. Deviation': [group1_data.std(), group2_data.std()]
                         }
-                        results_df = pd.DataFrame(group_stats_data)
+                        group_stats_df = pd.DataFrame(group_stats_data)
 
                         test_results_data = {
                             'Statistic': ['T-statistic', 'P-value'],
@@ -633,8 +634,8 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                             f"  P-value: {p_value:.4f}\n"
                             "Interpretation will be provided by the AI."
                         )
-                        # Store both dataframes in a tuple, results_str is still the primary return
-                        return results_str, (results_df, test_results_df), error_message # Return structured data
+                        # Store both dataframes in a tuple for structured_results_for_ui
+                        structured_results_for_ui = (group_stats_df, test_results_df)
 
         elif test_type == "chi_squared_test":
             append_debug_log(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
@@ -676,7 +677,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
         append_debug_log(f"DEBUG: Exception in perform_statistical_test: {e}") # Debug print
 
     # Ensure results_df is None if not specifically set (e.g., for ANOVA or Chi-squared in this demo)
-    return results_str, results_df, error_message # Updated return signature
+    return results_str, structured_results_for_ui, error_message # Updated return signature
 
 # --- Main Application Logic ---
 def main_app():
@@ -783,7 +784,8 @@ def main_app():
             with st.chat_message(message["role"]):
                 if message["role"] == "graph" and "content" in message:
                     st.image(message["content"], caption=message.get("caption", ""), use_container_width=True)
-                elif message["role"] == "dataframe" and "content" in message: # NEW: Handle dataframe messages
+                elif message["role"] == "dataframe": # NEW: Handle dataframe messages
+                    st.subheader(message.get("title", "Statistical Table")) # Display title for the table
                     st.dataframe(message["content"])
                 else:
                     st.markdown(message["content"])
@@ -864,9 +866,6 @@ def main_app():
             "ANOVA", 
             "Independent T-test", 
             "Chi-squared Test"
-            # "Paired T-test", # New
-            # "Pearson Correlation", # New
-            # "Spearman Rank Correlation" # New
         ]
         selected_test = st.sidebar.selectbox("Choose Statistical Test:", test_options, key="stat_test_select")
 
@@ -903,7 +902,7 @@ def main_app():
                     # Convert selected_test to the internal snake_case string used in perform_statistical_test
                     internal_test_type = selected_test.lower().replace(" ", "_").replace("-", "_")
                     
-                    test_results_str, structured_results_df, test_error = perform_statistical_test( # Updated return
+                    test_results_str, structured_results_for_ui, test_error = perform_statistical_test( # Updated return
                         st.session_state['df'], 
                         internal_test_type, 
                         stat_col1, 
@@ -913,19 +912,21 @@ def main_app():
                         st.session_state.messages.append({"role": "assistant", "content": test_error})
                         st.session_state.report_content.append({"type": "text", "content": f"Statistical Test Error ({selected_test}): {test_error}"})
                     else:
+                        # Add the initial text summary of the test to messages
                         st.session_state.messages.append({"role": "assistant", "content": test_results_str})
                         st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Statistical Test: {selected_test}"})
                         st.session_state.report_content.append({"type": "text", "content": test_results_str})
 
                         # NEW: Display structured results in UI and add to report
-                        if selected_test == "Independent T-test" and structured_results_df is not None:
-                            group_stats_df, test_stats_df = structured_results_df # Unpack the tuple
-                            st.subheader("Group Statistics")
-                            st.dataframe(group_stats_df)
-                            st.subheader("Test Results")
-                            st.dataframe(test_stats_df)
-
+                        if selected_test == "Independent T-test" and structured_results_for_ui is not None:
+                            group_stats_df, test_stats_df = structured_results_for_ui # Unpack the tuple
+                            
+                            # Add Group Statistics table to messages
+                            st.session_state.messages.append({"role": "dataframe", "title": "Group Statistics", "content": group_stats_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": "Group Statistics", "dataframe": group_stats_df})
+
+                            # Add Test Results table to messages
+                            st.session_state.messages.append({"role": "dataframe", "title": "Test Results", "content": test_stats_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": "Test Results", "dataframe": test_stats_df})
 
 
