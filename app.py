@@ -125,7 +125,7 @@ def check_openai_api_key():
         st.session_state['openai_client'] = None # Clear client on failure
         return False
     except RateLimitError:
-        st.error("OpenAI API rate limit exceeded. Please try again later or check your OpenAI usage.")
+        st.error("OpenAI API rate limit exceeded. Please try again in a moment.")
         st.session_state['openai_client'] = None # Clear client on failure
         return False
     except Exception as e:
@@ -600,65 +600,6 @@ def main_app():
                         st.session_state.messages.append({"role": "assistant", "content": graph_desc}) # graph_desc will contain error message
                         st.session_state.report_content.append({"type": "text", "content": graph_desc})
                 st.rerun() # Rerun to display the new message/graph immediately
-
-        # --- Basic Data Manipulation (New Section) ---
-        st.sidebar.markdown("---")
-        st.sidebar.header("Basic Data Operations")
-
-        # Find columns that look like percentages (object/string dtype, contain '%')
-        convertible_percentage_cols = []
-        if st.session_state['df'] is not None:
-            for col in st.session_state['df'].columns:
-                # Check if it's an object/string type and if any non-null value contains '%'
-                if (pd.api.types.is_object_dtype(st.session_state['df'][col]) or pd.api.types.is_string_dtype(st.session_state['df'][col])) and \
-                   st.session_state['df'][col].astype(str).str.contains('%', na=False).any():
-                    convertible_percentage_cols.append(col)
-        
-        if convertible_percentage_cols:
-            selected_convert_col = st.sidebar.selectbox(
-                "Select column to convert to numeric (e.g., 'XX%'):", 
-                ["Select a column"] + convertible_percentage_cols,
-                key="convert_col_select"
-            )
-            if selected_convert_col != "Select a column":
-                if st.sidebar.button(f"Convert '{selected_convert_col}' to Numeric"):
-                    df_copy = st.session_state['df'].copy()
-                    
-                    try:
-                        # Use pd.to_numeric for more robust conversion
-                        df_copy[selected_convert_col] = pd.to_numeric(
-                            df_copy[selected_convert_col].astype(str).str.replace('%', ''), 
-                            errors='coerce' # This will turn unconvertible values into NaN
-                        )
-                        
-                        # Handle potential NaNs introduced by coerce (optional, but good practice)
-                        if df_copy[selected_convert_col].isnull().any():
-                            st.warning(f"Some values in '{selected_convert_col}' could not be converted to numeric and were set to NaN.")
-                        
-                        st.session_state['df'] = df_copy # Update the DataFrame in session state
-
-                        # Regenerate summary as data types have changed
-                        summary_text, summary_table = get_data_summary(st.session_state['df'])
-                        st.session_state['data_summary_text'] = summary_text
-                        st.session_state['data_summary_table'] = summary_table
-
-                        conversion_message = (
-                            f"Successfully converted '{selected_convert_col}' to numeric (float) by removing the '%' sign. "
-                            f"Its data type is now {st.session_state['df'][selected_convert_col].dtype}. "
-                            "This is a crucial step for using this column in regression models. "
-                            "The dataset overview has been updated to reflect this change."
-                        )
-                        st.session_state.messages.append({"role": "assistant", "content": conversion_message})
-                        st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Data Operation: '{selected_convert_col}' Conversion"})
-                        st.session_state.report_content.append({"type": "text", "content": conversion_message})
-                        st.rerun()
-                    except Exception as e:
-                        error_message = f"Failed to convert '{selected_convert_col}' to numeric: {e}. Please ensure the column only contains numerical values and '%'."
-                        st.session_state.messages.append({"role": "assistant", "content": error_message})
-                        st.session_state.report_content.append({"type": "text", "content": error_message})
-                        st.rerun()
-        else:
-            st.sidebar.info("Upload data or ensure columns with '%' exist to enable data operations.")
 
         # --- Statistical Tests (New Section) ---
         st.sidebar.markdown("---")
