@@ -31,7 +31,7 @@ try:
     LOGIN_USERS = st.secrets["credentials"]          # Accessing the users from the [credentials] section
 except KeyError as e:
     st.error(f"Secret not found: {e}. Please ensure your .streamlit/secrets.toml file is correctly configured with [openai] and [credentials] sections.")
-    st.stop() # Stop the app if secrets are missing
+    st.stop() # Stop the app if secrets is missing
 
 # Initialize OpenAI client (will be initialized after API key check)
 client = None 
@@ -490,10 +490,6 @@ def main_app():
                     df = pd.read_excel(uploaded_file)
                 st.session_state['df'] = df
 
-                st.subheader("Dataset Preview:")
-                st.dataframe(df.head())
-                st.write(f"Shape: {df.shape[0]} rows, {df.shape[1]} columns")
-
                 # Generate data summary and store it
                 summary_text, summary_table = get_data_summary(df)
                 st.session_state['data_summary_text'] = summary_text
@@ -529,6 +525,12 @@ def main_app():
                 st.stop() # Stop further execution if file reading fails
 
     if st.session_state['df'] is not None:
+        # --- Persistent Data Preview Area ---
+        st.subheader("Current Dataset Preview (Top 5 Rows):")
+        st.dataframe(st.session_state['df'].head())
+        st.write(f"Shape: {st.session_state['df'].shape[0]} rows, {st.session_state['df'].shape[1]} columns")
+        st.markdown("---") # Separator for clarity
+
         st.subheader("Chat with your Data Preprocessing Assistant")
 
         # Display chat messages from history with different colors
