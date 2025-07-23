@@ -567,8 +567,8 @@ def perform_statistical_test(df, test_type, col1, col2=None):
     try:
         if test_type == "anova":
             append_debug_log(f"DEBUG ANOVA: col1={col1}, col2={col2}")
-            append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
-            append_debug_log(f"DEBUG ANOVA: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
+            append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(df[{col1}])={pd.api.types.is_numeric_dtype(df[col1])}")
+            append_debug_log(f"DEBUG ANOVA: is_categorical_dtype(df[{col2}])={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(df[{col2}])={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(df[{col2}])={pd.api.types.is_string_dtype(df[col2])}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"ANOVA: Dependent variable '{col1}' must be numerical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
@@ -585,8 +585,8 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                 elif any(len(g) == 0 for g in groups):
                     error_message = f"ANOVA: Some groups in '{col2}' have no data for '{col1}' after dropping NaNs."
                 else:
-                    # Perform ANOVA
-                    f_statistic, p_value = stats.f_oneway(*groups)
+                    # Perform ANOVA using scipy
+                    f_statistic_scipy, p_value_scipy = stats.f_oneway(*groups)
 
                     # Calculate Sum of Squares (SS) and Degrees of Freedom (df) for ANOVA table
                     grand_mean = clean_df[col1].mean()
@@ -610,7 +610,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                     msb = ssb / df_between if df_between > 0 else np.nan
                     msw = ssw / df_within if df_within > 0 else np.nan
 
-                    # F-statistic (re-calculated to match SS/MS for table consistency)
+                    # F-statistic (re-calculated to match SS/MS for table consistency, should be close to scipy's)
                     f_stat_calculated = msb / msw if msw > 0 else np.nan
 
                     # Create ANOVA Summary DataFrame
@@ -620,30 +620,28 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         'df': [df_between, df_within, df_total],
                         'Mean Squares (MS)': [msb, msw, np.nan], # MS for Total is not typically reported
                         'F': [f_stat_calculated, np.nan, np.nan], # F-stat only for Between Groups
-                        'P-value': [p_value, np.nan, np.nan] # P-value only for Between Groups
+                        'P-value': [p_value_scipy, np.nan, np.nan] # P-value only for Between Groups
                     }
                     anova_df = pd.DataFrame(anova_summary_data)
                     
                     results_str = (
                         f"ANOVA Test Results for '{col1}' by '{col2}':\n"
-                        f"  F-statistic: {f_statistic:.4f}\n" # Use scipy's F-stat for the initial text summary
-                        f"  P-value: {p_value:.4f}\n"
+                        f"  F-statistic: {f_statistic_scipy:.4f}\n" # Use scipy's F-stat for the initial text summary
+                        f"  P-value: {p_value_scipy:.4f}\n"
                         "Interpretation will be provided by the AI."
                     )
                     structured_results_for_ui = anova_df # Return the single DataFrame
 
         elif test_type == "independent_t_test":
-            append_debug_log(f"DEBUG T-test: col1={col1}, col2={col2}")
-            append_debug_log(f"DEBUG T-test: df[col1].dtype={df[col1].dtype}, df[col2].dtype={df[col2].dtype}")
-            append_debug_log(f"DEBUG T-test: is_numeric_dtype(col1)={pd.api.types.is_numeric_dtype(df[col1])}")
-            append_debug_log(f"DEBUG T-test: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
+            append_debug_log(f"DEBUG Independent T-test: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG Independent T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"Independent T-test: Numerical variable '{col1}' must be numerical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"Independent T-test: Grouping variable '{col2}' must be categorical."
             else:
                 unique_groups = df[col2].unique()
-                append_debug_log(f"DEBUG T-test: unique_groups={unique_groups}, len(unique_groups)={len(unique_groups)}")
+                append_debug_log(f"DEBUG Independent T-test: unique_groups={unique_groups}, len(unique_groups)={len(unique_groups)}")
                 if len(unique_groups) != 2:
                     error_message = f"Independent T-test: Grouping variable '{col2}' must have exactly 2 distinct groups. Found {len(unique_groups)}."
                 else:
@@ -651,11 +649,11 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                     group2_name = unique_groups[1]
                     group1_data = df[col1][df[col2] == group1_name].dropna()
                     group2_data = df[col1][df[col2] == group2_name].dropna()
-                    append_debug_log(f"DEBUG T-test: group1_data_len={len(group1_data)}, group2_data_len={len(group2_data)}")
+                    append_debug_log(f"DEBUG Independent T-test: group1_data_len={len(group1_data)}, group2_data_len={len(group2_data)}")
                     if len(group1_data) == 0 or len(group2_data) == 0:
                         error_message = f"Independent T-test: One or both groups have no data for '{col1}' after dropping NaNs."
                     else:
-                        t_statistic, p_value = stats.ttest_ind(group1_data, group2_data)
+                        t_statistic, p_value = stats.ttest_ind(group1_data, group2_data, equal_var=True) # Assuming equal variances for this specific test
                         
                         # Prepare structured results (Excel-like output)
                         group_stats_data = {
@@ -673,7 +671,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         test_results_df = pd.DataFrame(test_results_data)
 
                         results_str = (
-                            f"Independent T-test Results for '{col1}' by '{col2}' ({group1_name} vs {group2_name}):\n"
+                            f"Independent T-test (Equal Variances Assumed) Results for '{col1}' by '{col2}' ({group1_name} vs {group2_name}):\n"
                             f"  T-statistic: {t_statistic:.4f}\n"
                             f"  P-value: {p_value:.4f}\n"
                             "Interpretation will be provided by the AI."
@@ -683,9 +681,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
 
         elif test_type == "chi_squared_test":
             append_debug_log(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
-            append_debug_log(f"DEBUG Chi-squared: df[col1].dtype={df[col1].dtype}, df[col2].dtype={df[col2].dtype}")
-            append_debug_log(f"DEBUG Chi-squared: is_categorical_dtype(col1)={pd.api.types.is_categorical_dtype(df[col1])} | is_object_dtype(col1)={pd.api.types.is_object_dtype(df[col1])} | is_string_dtype(col1)={pd.api.types.is_string_dtype(df[col1])}")
-            append_debug_log(f"DEBUG Chi-squared: is_categorical_dtype(col2)={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(col2)={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(col2)={pd.api.types.is_string_dtype(df[col2])}")
+            append_debug_log(f"DEBUG Chi-squared: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not (pd.api.types.is_object_dtype(df[col1]) or pd.api.types.is_string_dtype(df[col1]) or pd.api.types.is_categorical_dtype(df[col1])):
                 error_message = f"Chi-squared: Column 1 '{col1}' must be categorical."
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
@@ -697,6 +693,11 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                      error_message = f"Chi-squared: No valid data to form a contingency table for '{col1}' and '{col2}'."
                 else:
                     chi2, p_value, dof, expected = stats.chi2_contingency(contingency_table)
+                    
+                    # Create DataFrames for Observed and Expected tables
+                    observed_df = contingency_table
+                    expected_df = pd.DataFrame(expected, index=contingency_table.index, columns=contingency_table.columns)
+
                     results_str = (
                         f"Chi-squared Test Results for '{col1}' and '{col2}':\n"
                         f"  Chi-squared statistic: {chi2:.4f}\n"
@@ -704,14 +705,236 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         f"  Degrees of Freedom (dof): {dof}\n"
                         "Interpretation will be provided by the AI."
                     )
-        
-        # --- NEW STATISTICAL TESTS (TEMPORARILY REMOVED FOR DEMO) ---
-        # elif test_type == "paired_t_test":
-        #     ...
-        # elif test_type == "pearson_correlation":
-        #     ...
-        # elif test_type == "spearman_rank_correlation":
-        #     ...
+                    structured_results_for_ui = (observed_df, expected_df, chi2, p_value, dof) # Return tuple of DFs and key stats
+
+        elif test_type == "paired_t_test":
+            append_debug_log(f"DEBUG Paired T-test: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG Paired T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
+            if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
+                error_message = f"Paired T-test: Both '{col1}' and '{col2}' must be numerical variables."
+            else:
+                # Drop rows where either of the two columns has NaN to ensure paired data
+                paired_df = df[[col1, col2]].dropna()
+                if len(paired_df) < 2: # Need at least 2 pairs to run t-test
+                    error_message = f"Paired T-test: Not enough paired data points after dropping NaNs. Need at least 2."
+                else:
+                    t_statistic, p_value = stats.ttest_rel(paired_df[col1], paired_df[col2])
+
+                    # Calculate means and std devs for display
+                    mean1 = paired_df[col1].mean()
+                    std1 = paired_df[col1].std()
+                    mean2 = paired_df[col2].mean()
+                    std2 = paired_df[col2].std()
+                    n_pairs = len(paired_df)
+
+                    # Create Group Statistics table for paired data
+                    group_stats_data = {
+                        'Variable': [col1, col2],
+                        'N': [n_pairs, n_pairs],
+                        'Mean': [mean1, mean2],
+                        'Std. Deviation': [std1, std2]
+                    }
+                    group_stats_df = pd.DataFrame(group_stats_data)
+
+                    # Create Test Results table
+                    test_results_data = {
+                        'Statistic': ['T-statistic', 'P-value'],
+                        'Value': [t_statistic, p_value]
+                    }
+                    test_results_df = pd.DataFrame(test_results_data)
+
+                    results_str = (
+                        f"Paired T-test Results for '{col1}' and '{col2}':\n"
+                        f"  T-statistic: {t_statistic:.4f}\n"
+                        f"  P-value: {p_value:.4f}\n"
+                        "Interpretation will be provided by the AI."
+                    )
+                    structured_results_for_ui = (group_stats_df, test_results_df)
+
+        elif test_type == "pearson_correlation":
+            append_debug_log(f"DEBUG Pearson Correlation: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG Pearson Correlation: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
+            if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
+                error_message = f"Pearson Correlation: Both '{col1}' and '{col2}' must be numerical variables."
+            else:
+                # Drop rows where either of the two columns has NaN to ensure consistent length
+                clean_df = df[[col1, col2]].dropna()
+                if len(clean_df) < 2: # Need at least 2 data points for correlation
+                    error_message = f"Pearson Correlation: Not enough data points after dropping NaNs. Need at least 2."
+                else:
+                    correlation_coefficient, p_value = stats.pearsonr(clean_df[col1], clean_df[col2])
+                    covariance = clean_df[col1].cov(clean_df[col2]) # Calculate covariance
+                    n_obs = len(clean_df)
+
+                    # Create Correlation Results table
+                    corr_results_data = {
+                        'Statistic': ['Pearson Correlation (r)', 'Covariance', 'P-value', 'N'],
+                        'Value': [correlation_coefficient, covariance, p_value, n_obs]
+                    }
+                    corr_results_df = pd.DataFrame(corr_results_data)
+
+                    results_str = (
+                        f"Pearson Correlation Results for '{col1}' and '{col2}':\n"
+                        f"  Correlation Coefficient (r): {correlation_coefficient:.4f}\n"
+                        f"  P-value: {p_value:.4f}\n"
+                        f"  Covariance: {covariance:.4f}\n"
+                        "Interpretation will be provided by the AI."
+                    )
+                    structured_results_for_ui = corr_results_df
+
+        elif test_type == "spearman_rank_correlation":
+            append_debug_log(f"DEBUG Spearman Correlation: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG Spearman Correlation: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
+            if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]): # Spearman can also use ordinal, but for simplicity, we'll stick to numerical selection
+                error_message = f"Spearman Rank Correlation: Both '{col1}' and '{col2}' must be numerical variables."
+            else:
+                # Drop rows where either of the two columns has NaN to ensure consistent length
+                clean_df = df[[col1, col2]].dropna()
+                if len(clean_df) < 2: # Need at least 2 data points for correlation
+                    error_message = f"Spearman Rank Correlation: Not enough data points after dropping NaNs. Need at least 2."
+                else:
+                    correlation_coefficient, p_value = stats.spearmanr(clean_df[col1], clean_df[col2])
+                    n_obs = len(clean_df)
+
+                    # Create Correlation Results table
+                    spearman_results_data = {
+                        'Statistic': ['Spearman Correlation (rho)', 'P-value', 'N'],
+                        'Value': [correlation_coefficient, p_value, n_obs]
+                    }
+                    spearman_results_df = pd.DataFrame(spearman_results_data)
+
+                    results_str = (
+                        f"Spearman Rank Correlation Results for '{col1}' and '{col2}':\n"
+                        f"  Correlation Coefficient (rho): {correlation_coefficient:.4f}\n"
+                        f"  P-value: {p_value:.4f}\n"
+                        "Interpretation will be provided by the AI."
+                    )
+                    structured_results_for_ui = spearman_results_df
+
+        elif test_type == "f_test_two_sample_for_variances":
+            append_debug_log(f"DEBUG F-Test for Variances: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG F-Test for Variances: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
+            if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
+                error_message = f"F-Test for Variances: Both '{col1}' and '{col2}' must be numerical variables."
+            else:
+                data1 = df[col1].dropna()
+                data2 = df[col2].dropna()
+                if len(data1) < 2 or len(data2) < 2:
+                    error_message = f"F-Test for Variances: Both columns must have at least 2 non-null data points. '{col1}' has {len(data1)}, '{col2}' has {len(data2)}."
+                else:
+                    var1 = np.var(data1, ddof=1) # Sample variance
+                    var2 = np.var(data2, ddof=1) # Sample variance
+
+                    if var1 == 0 and var2 == 0:
+                        error_message = "F-Test for Variances: Both variances are zero. Cannot perform test."
+                    elif var1 == 0:
+                        f_statistic = np.inf # If one variance is zero, F-stat is infinite
+                    elif var2 == 0:
+                        f_statistic = 0 # If other variance is zero, F-stat is zero
+                    else:
+                        f_statistic = var1 / var2 if var1 >= var2 else var2 / var1 # F-statistic is always >= 1
+
+                    df1 = len(data1) - 1
+                    df2 = len(data2) - 1
+
+                    if f_statistic == np.inf:
+                        p_value = 0.0 # Very small p-value
+                    elif f_statistic == 0:
+                        p_value = 1.0 # Very large p-value
+                    else:
+                        # For two-tailed test, p-value is 2 * min(cdf(F), 1 - cdf(F))
+                        # We use the larger variance in the numerator for F-stat >= 1
+                        if var1 >= var2:
+                            p_value = 2 * min(stats.f.cdf(f_statistic, df1, df2), 1 - stats.f.cdf(f_statistic, df1, df2))
+                        else: # var2 >= var1, so F = var2/var1, df is (df2, df1)
+                            p_value = 2 * min(stats.f.cdf(f_statistic, df2, df1), 1 - stats.f.cdf(f_statistic, df2, df1))
+
+                    f_test_data = {
+                        'Statistic': ['Variance 1', 'Observations 1', 'df 1', 'Variance 2', 'Observations 2', 'df 2', 'F-statistic', 'P-value'],
+                        'Value': [var1, len(data1), df1, var2, len(data2), df2, f_statistic, p_value]
+                    }
+                    f_test_df = pd.DataFrame(f_test_data)
+
+                    results_str = (
+                        f"F-Test Two-Sample for Variances Results for '{col1}' and '{col2}':\n"
+                        f"  F-statistic: {f_statistic:.4f}\n"
+                        f"  P-value: {p_value:.4f}\n"
+                        "Interpretation will be provided by the AI."
+                    )
+                    structured_results_for_ui = f_test_df
+
+        elif test_type == "t_test_two_sample_assuming_unequal_variances":
+            append_debug_log(f"DEBUG Unequal Variances T-test: col1={col1}, col2={col2}")
+            append_debug_log(f"DEBUG Unequal Variances T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
+            if not pd.api.types.is_numeric_dtype(df[col1]):
+                error_message = f"T-test (Unequal Variances): Numerical variable '{col1}' must be numerical."
+            elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
+                error_message = f"T-test (Unequal Variances): Grouping variable '{col2}' must be categorical."
+            else:
+                unique_groups = df[col2].unique()
+                append_debug_log(f"DEBUG Unequal Variances T-test: unique_groups={unique_groups}, len(unique_groups)={len(unique_groups)}")
+                if len(unique_groups) != 2:
+                    error_message = f"T-test (Unequal Variances): Grouping variable '{col2}' must have exactly 2 distinct groups. Found {len(unique_groups)}."
+                else:
+                    group1_name = unique_groups[0]
+                    group2_name = unique_groups[1]
+                    group1_data = df[col1][df[col2] == group1_name].dropna()
+                    group2_data = df[col1][df[col2] == group2_name].dropna()
+                    append_debug_log(f"DEBUG Unequal Variances T-test: group1_data_len={len(group1_data)}, group2_data_len={len(group2_data)}")
+                    if len(group1_data) == 0 or len(group2_data) == 0:
+                        error_message = f"T-test (Unequal Variances): One or both groups have no data for '{col1}' after dropping NaNs."
+                    else:
+                        t_statistic, p_value = stats.ttest_ind(group1_data, group2_data, equal_var=False) # Assuming unequal variances
+                        
+                        # Prepare structured results (Excel-like output)
+                        group_stats_data = {
+                            'Group': [group1_name, group2_name],
+                            'N': [len(group1_data), len(group2_data)],
+                            'Mean': [group1_data.mean(), group2_data.mean()],
+                            'Std. Deviation': [group1_data.std(), group2_data.std()]
+                        }
+                        group_stats_df = pd.DataFrame(group_stats_data)
+
+                        test_results_data = {
+                            'Statistic': ['T-statistic', 'P-value'],
+                            'Value': [t_statistic, p_value]
+                        }
+                        test_results_df = pd.DataFrame(test_results_data)
+
+                        results_str = (
+                            f"Independent T-test (Unequal Variances Assumed) Results for '{col1}' by '{col2}' ({group1_name} vs {group2_name}):\n"
+                            f"  T-statistic: {t_statistic:.4f}\n"
+                            f"  P-value: {p_value:.4f}\n"
+                            "Interpretation will be provided by the AI."
+                        )
+                        structured_results_for_ui = (group_stats_df, test_results_df)
+
+        elif test_type == "shapiro_wilk_test":
+            append_debug_log(f"DEBUG Shapiro-Wilk Test: col1={col1}")
+            append_debug_log(f"DEBUG Shapiro-Wilk Test: df[{col1}].dtype={df[col1].dtype}")
+            if not pd.api.types.is_numeric_dtype(df[col1]):
+                error_message = f"Shapiro-Wilk Test: Variable '{col1}' must be numerical."
+            else:
+                data = df[col1].dropna()
+                if len(data) < 3: # Shapiro-Wilk requires at least 3 data points
+                    error_message = f"Shapiro-Wilk Test: Not enough data points after dropping NaNs. Need at least 3. Found {len(data)}."
+                else:
+                    shapiro_w, shapiro_p = stats.shapiro(data)
+                    
+                    normality_results_data = {
+                        'Statistic': ['W-statistic', 'P-value', 'N'],
+                        'Value': [shapiro_w, shapiro_p, len(data)]
+                    }
+                    normality_results_df = pd.DataFrame(normality_results_data)
+
+                    results_str = (
+                        f"Shapiro-Wilk Test for Normality on '{col1}':\n"
+                        f"  W-statistic: {shapiro_w:.4f}\n"
+                        f"  P-value: {shapiro_p:.4f}\n"
+                        "Interpretation will be provided by the AI."
+                    )
+                    structured_results_for_ui = normality_results_df
+
         else:
             error_message = "Unsupported statistical test type selected."
 
@@ -720,8 +943,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
         st.exception(e) # Display traceback in UI for debugging
         append_debug_log(f"DEBUG: Exception in perform_statistical_test: {e}") # Debug print
 
-    # Ensure results_df is None if not specifically set (e.g., for ANOVA or Chi-squared in this demo)
-    return results_str, structured_results_for_ui, error_message # Updated return signature
+    return results_str, structured_results_for_ui, error_message
 
 # --- Main Application Logic ---
 def main_app():
@@ -904,54 +1126,100 @@ def main_app():
         st.sidebar.markdown("---")
         st.sidebar.header("Perform Statistical Tests")
 
-        # Temporarily limiting options for demo
+        # UPDATED: Added all new statistical test options
         test_options = [
             "Select a test", 
             "ANOVA", 
-            "Independent T-test", 
-            "Chi-squared Test"
+            "Independent T-test", # Assumes Equal Variances
+            "Paired T-test", 
+            "Chi-squared Test", 
+            "Pearson Correlation", 
+            "Spearman Rank Correlation",
+            "F-Test Two-Sample for Variances", # New
+            "T-test: Two-Sample Assuming Unequal Variances", # New
+            "Shapiro-Wilk Test (Normality)" # New
         ]
         selected_test = st.sidebar.selectbox("Choose Statistical Test:", test_options, key="stat_test_select")
 
         stat_col1 = None
         stat_col2 = None
+        stat_col_single = None # For single-column tests like Shapiro-Wilk
 
+        # Dynamic column selection based on selected test
         if selected_test == "ANOVA":
             st.sidebar.info("ANOVA: Compares means of a numerical variable across 2+ categories.")
-            stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + all_columns, key="anova_num_col")
-            stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + all_columns, key="anova_cat_col")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + numerical_columns, key="anova_num_col")
+            stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + categorical_columns, key="anova_cat_col")
         elif selected_test == "Independent T-test":
-            st.sidebar.info("T-test: Compares means of a numerical variable between 2 groups.")
-            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + all_columns, key="ttest_num_col")
-            stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + all_columns, key="ttest_cat_col")
+            st.sidebar.info("T-test (Equal Variances): Compares means of a numerical variable between 2 groups.")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="ttest_eq_num_col")
+            stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ttest_eq_cat_col")
+        elif selected_test == "Paired T-test":
+            st.sidebar.info("Paired T-test: Compares means of two related numerical variables (e.g., before/after).")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable 1 (e.g., Before):", ["Select column"] + numerical_columns, key="paired_ttest_num1_col")
+            stat_col2 = st.sidebar.selectbox("Numerical Variable 2 (e.g., After):", ["Select column"] + numerical_columns, key="paired_ttest_num2_col")
         elif selected_test == "Chi-squared Test":
             st.sidebar.info("Chi-squared: Tests association between two categorical variables.")
-            stat_col1 = st.sidebar.selectbox("Categorical Variable 1:", ["Select column"] + all_columns, key="chi2_cat1_col")
-            stat_col2 = st.sidebar.selectbox("Categorical Variable 2:", ["Select column"] + all_columns, key="chi2_cat2_col")
+            stat_col1 = st.sidebar.selectbox("Categorical Variable 1:", ["Select column"] + categorical_columns, key="chi2_cat1_col")
+            stat_col2 = st.sidebar.selectbox("Categorical Variable 2:", ["Select column"] + categorical_columns, key="chi2_cat2_col")
+        elif selected_test == "Pearson Correlation":
+            st.sidebar.info("Pearson Correlation: Measures linear relationship between two numerical variables.")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable 1:", ["Select column"] + numerical_columns, key="pearson_num1_col")
+            stat_col2 = st.sidebar.selectbox("Numerical Variable 2:", ["Select column"] + numerical_columns, key="pearson_num2_col")
+        elif selected_test == "Spearman Rank Correlation":
+            st.sidebar.info("Spearman Rank Correlation: Measures monotonic relationship between two numerical/ordinal variables.")
+            stat_col1 = st.sidebar.selectbox("Numerical/Ordinal Variable 1:", ["Select column"] + numerical_columns, key="spearman_num1_col")
+            stat_col2 = st.sidebar.selectbox("Numerical/Ordinal Variable 2:", ["Select column"] + numerical_columns, key="spearman_num2_col")
+        elif selected_test == "F-Test Two-Sample for Variances":
+            st.sidebar.info("F-Test: Compares the variances of two independent numerical samples.")
+            stat_col1 = st.sidebar.selectbox("Numerical Sample 1:", ["Select column"] + numerical_columns, key="f_test_num1_col")
+            stat_col2 = st.sidebar.selectbox("Numerical Sample 2:", ["Select column"] + numerical_columns, key="f_test_num2_col")
+        elif selected_test == "T-test: Two-Sample Assuming Unequal Variances":
+            st.sidebar.info("T-test (Unequal Variances): Compares means of a numerical variable between 2 groups, not assuming equal variances.")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="ttest_uneq_num_col")
+            stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ttest_uneq_cat_col")
+        elif selected_test == "Shapiro-Wilk Test (Normality)":
+            st.sidebar.info("Shapiro-Wilk Test: Tests if a numerical variable is normally distributed.")
+            stat_col_single = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="shapiro_num_col")
         
         if st.sidebar.button(f"Run {selected_test}"):
             append_debug_log(f"DEBUG: Button '{selected_test}' clicked.")
-            append_debug_log(f"DEBUG: selected_test='{selected_test}', stat_col1='{stat_col1}', stat_col2='{stat_col2}'")
+            append_debug_log(f"DEBUG: selected_test='{selected_test}', stat_col1='{stat_col1}', stat_col2='{stat_col2}', stat_col_single='{stat_col_single}'")
 
-            # Validate column selections for new tests
+            # Validate column selections based on test type
+            is_valid_selection = True
             if selected_test == "Select a test":
-                append_debug_log("DEBUG: Warning: 'Select a test' triggered.")
                 st.sidebar.warning("Please select a statistical test to run.")
-            elif stat_col1 == "Select column" or stat_col2 == "Select column": # Simplified check for all 2-column tests
-                append_debug_log("DEBUG: Warning: 'Select column' for stat_col1 or stat_col2 triggered.")
+                is_valid_selection = False
+            elif selected_test == "Shapiro-Wilk Test (Normality)":
+                if stat_col_single == "Select column":
+                    st.sidebar.warning("Please select a numerical variable for the Shapiro-Wilk Test.")
+                    is_valid_selection = False
+            elif stat_col1 == "Select column" or stat_col2 == "Select column":
                 st.sidebar.warning("Please select all required columns for the chosen test.")
-            else:
-                append_debug_log(f"DEBUG: Calling perform_statistical_test for {selected_test} with {stat_col1}, {stat_col2}")
+                is_valid_selection = False
+            
+            if is_valid_selection:
+                append_debug_log(f"DEBUG: Calling perform_statistical_test for {selected_test} with {stat_col1}, {stat_col2 if selected_test != 'Shapiro-Wilk Test (Normality)' else stat_col_single}")
                 with st.spinner(f"Running {selected_test}..."):
                     # Convert selected_test to the internal snake_case string used in perform_statistical_test
-                    internal_test_type = selected_test.lower().replace(" ", "_").replace("-", "_")
+                    internal_test_type = selected_test.lower().replace(" ", "_").replace("-", "_").replace("(", "").replace(")", "")
                     
-                    test_results_str, structured_results_for_ui, test_error = perform_statistical_test( # Updated return
-                        st.session_state['df'], 
-                        internal_test_type, 
-                        stat_col1, 
-                        stat_col2
-                    )
+                    # Pass appropriate columns based on test type
+                    if selected_test == "Shapiro-Wilk Test (Normality)":
+                        test_results_str, structured_results_for_ui, test_error = perform_statistical_test(
+                            st.session_state['df'], 
+                            internal_test_type, 
+                            stat_col_single # Only one column for Shapiro-Wilk
+                        )
+                    else:
+                        test_results_str, structured_results_for_ui, test_error = perform_statistical_test(
+                            st.session_state['df'], 
+                            internal_test_type, 
+                            stat_col1, 
+                            stat_col2
+                        )
+
                     if test_error:
                         st.session_state.messages.append({"role": "assistant", "content": test_error})
                         st.session_state.report_content.append({"type": "text", "content": f"Statistical Test Error ({selected_test}): {test_error}"})
@@ -962,27 +1230,55 @@ def main_app():
                         st.session_state.report_content.append({"type": "text", "content": test_results_str})
 
                         # NEW: Display structured results in UI and add to report based on test type
-                        if selected_test == "Independent T-test" and structured_results_for_ui is not None:
+                        if selected_test in ["Independent T-test", "Paired T-test", "T-test: Two-Sample Assuming Unequal Variances"] and structured_results_for_ui is not None:
                             group_stats_df, test_stats_df = structured_results_for_ui # Unpack the tuple
                             
-                            # Add Group Statistics table to messages
                             st.session_state.messages.append({"role": "dataframe", "title": "Group Statistics", "content": group_stats_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": "Group Statistics", "dataframe": group_stats_df})
 
-                            # Add Test Results table to messages
                             st.session_state.messages.append({"role": "dataframe", "title": "Test Results", "content": test_stats_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": "Test Results", "dataframe": test_stats_df})
                         
-                        elif selected_test == "ANOVA" and structured_results_for_ui is not None: # NEW: Handle ANOVA structured output
-                            anova_df = structured_results_for_ui # For ANOVA, it's a single DataFrame
+                        elif selected_test == "ANOVA" and structured_results_for_ui is not None:
+                            anova_df = structured_results_for_ui
                             st.session_state.messages.append({"role": "dataframe", "title": "ANOVA Summary Table", "content": anova_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": "ANOVA Summary Table", "dataframe": anova_df})
+
+                        elif selected_test in ["Pearson Correlation", "Spearman Rank Correlation", "F-Test Two-Sample for Variances", "Shapiro-Wilk Test (Normality)"] and structured_results_for_ui is not None:
+                            # These tests return a single DataFrame
+                            single_table_df = structured_results_for_ui
+                            table_title = f"{selected_test} Results"
+                            if selected_test == "Shapiro-Wilk Test (Normality)":
+                                table_title = f"Shapiro-Wilk Test Results for {stat_col_single}"
+                            
+                            st.session_state.messages.append({"role": "dataframe", "title": table_title, "content": single_table_df})
+                            st.session_state.report_content.append({"type": "stat_table", "title": table_title, "dataframe": single_table_df})
+
+                        elif selected_test == "Chi-squared Test" and structured_results_for_ui is not None:
+                            observed_df, expected_df, chi2_val, p_val, dof_val = structured_results_for_ui
+
+                            st.session_state.messages.append({"role": "dataframe", "title": "Observed Frequencies", "content": observed_df})
+                            st.session_state.report_content.append({"type": "stat_table", "title": "Observed Frequencies", "dataframe": observed_df})
+
+                            st.session_state.messages.append({"role": "dataframe", "title": "Expected Frequencies", "content": expected_df})
+                            st.session_state.report_content.append({"type": "stat_table", "title": "Expected Frequencies", "dataframe": expected_df})
+
+                            # Add summary text for Chi-squared after tables
+                            chi2_summary_text = (
+                                f"Chi-squared Test Statistics:\n"
+                                f"  Chi-squared statistic: {chi2_val:.4f}\n"
+                                f"  P-value: {p_val:.4f}\n"
+                                f"  Degrees of Freedom (dof): {dof_val}\n"
+                                "Interpretation will be provided by the AI."
+                            )
+                            st.session_state.messages.append({"role": "assistant", "content": chi2_summary_text})
+                            st.session_state.report_content.append({"type": "text", "content": chi2_summary_text})
 
 
                         # Get AI interpretation of the test results
                         interpretation_prompt = (
                             f"A {selected_test} was just performed with the following results:\n"
-                            f"{test_results_str}\n"
+                            f"{test_results_str}\n" # Use the original results_str for AI prompt
                             "Please provide a concise, plain-language interpretation of these results, "
                             "focusing on what the p-value means and the implications for the relationship between the variables. "
                             "Do NOT provide code or markdown formatting."
@@ -1100,4 +1396,3 @@ if not st.session_state['logged_in']:
     check_password()
 else:
     main_app()
-    
