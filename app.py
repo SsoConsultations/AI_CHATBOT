@@ -830,28 +830,26 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                     elif var1 == 0:
                         f_statistic = np.inf # If one variance is zero, F-stat is infinite
                     elif var2 == 0:
-                        f_statistic = 0 # If other variance is zero, F-stat is zero
+                        f_statistic = 0.0 # If other variance is zero, F-stat is zero
                     else:
-                        f_statistic = var1 / var2 if var1 >= var2 else var2 / var1 # F-statistic is always >= 1
+                        f_statistic = var1 / var2 # F-statistic can be < 1
 
                     df1 = len(data1) - 1
                     df2 = len(data2) - 1
 
                     if f_statistic == np.inf:
                         p_value = 0.0 # Very small p-value
-                    elif f_statistic == 0:
+                    elif f_statistic == 0.0: # Check for 0.0 explicitly
                         p_value = 1.0 # Very large p-value
                     else:
                         # For two-tailed test, p-value is 2 * min(cdf(F), 1 - cdf(F))
-                        # We use the larger variance in the numerator for F-stat >= 1
-                        if var1 >= var2:
-                            p_value = 2 * min(stats.f.cdf(f_statistic, df1, df2), 1 - stats.f.cdf(f_statistic, df1, df2))
-                        else: # var2 >= var1, so F = var2/var1, df is (df2, df1)
-                            p_value = 2 * min(stats.f.cdf(f_statistic, df2, df1), 1 - stats.f.cdf(f_statistic, df2, df1))
+                        # The degrees of freedom order depends on which variance is in the numerator
+                        p_value = 2 * min(stats.f.cdf(f_statistic, df1, df2), 1 - stats.f.cdf(f_statistic, df1, df2))
+
 
                     f_test_data = {
                         'Statistic': ['Variance 1', 'Observations 1', 'df 1', 'Variance 2', 'Observations 2', 'df 2', 'F-statistic', 'P-value'],
-                        'Value': [var1, len(data1), df1, var2, len(data2), df2, f_statistic, p_value]
+                        'Value': [var1, float(len(data1)), float(df1), var2, float(len(data2)), float(df2), f_statistic, p_value]
                     }
                     f_test_df = pd.DataFrame(f_test_data)
 
@@ -909,8 +907,8 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                         )
                         structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "shapiro_wilk_test":
-            append_debug_log(f"DEBUG Shapiro-Wilk Test: col1={col1}")
+        elif test_type == "shapiro_wilk_test_normality": # FIXED: Corrected name to match selected_test conversion
+            append_debug_log(f"DEBUG Shapiro-Wilk Test: col1={col1}") # col1 here is actually stat_col_single
             append_debug_log(f"DEBUG Shapiro-Wilk Test: df[{col1}].dtype={df[col1].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
                 error_message = f"Shapiro-Wilk Test: Variable '{col1}' must be numerical."
@@ -923,7 +921,7 @@ def perform_statistical_test(df, test_type, col1, col2=None):
                     
                     normality_results_data = {
                         'Statistic': ['W-statistic', 'P-value', 'N'],
-                        'Value': [shapiro_w, shapiro_p, len(data)]
+                        'Value': [shapiro_w, shapiro_p, float(len(data))] # Ensure N is float for consistent formatting
                     }
                     normality_results_df = pd.DataFrame(normality_results_data)
 
