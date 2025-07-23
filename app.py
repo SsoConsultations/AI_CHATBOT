@@ -219,14 +219,22 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
         return "AI features are not enabled due to API key issues. Please check your OpenAI API key."
 
     try:
-        print(f"DEBUG: Sending prompt to OpenAI (max_tokens=2000):\n{prompt}\n---") # Debug print
+        # Filter messages to only include text-based content for the AI API call
+        api_messages_history = []
+        # Only send the last 5 relevant messages to save tokens and maintain context
+        for msg in st.session_state.messages[-5:]:
+            if msg["role"] in ["user", "assistant"]: # Only include user and assistant text messages
+                api_messages_history.append({"role": msg["role"], "content": msg["content"]})
+        
+        # Add the current user prompt
+        api_messages_history.append({"role": "user", "content": prompt})
+
+        print(f"DEBUG: Sending prompt to OpenAI (max_tokens=2000):\n{api_messages_history}\n---") # Debug print
         response = client_instance.chat.completions.create( # Use client_instance here
             model=model,
             messages=[
                 {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks) in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
-                # Only include relevant chat history for AI to avoid exceeding token limits for long conversations
-                *st.session_state.messages[-5:], # Send last 5 messages + current prompt to save tokens
-                {"role": "user", "content": prompt}
+                *api_messages_history # Use the filtered history
             ],
             temperature=0.7,
             max_tokens=2000, # Increased max_tokens for debugging
@@ -718,8 +726,6 @@ def main_app():
                     if img_buffer:
                         # Add graph to messages for persistent display
                         st.session_state.messages.append({"role": "graph", "content": img_buffer, "caption": graph_desc})
-                        st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Graph Generated: {selected_graph_type}"})
-                        st.session_state.report_content.append({"type": "image", "content": img_buffer, "caption": graph_desc})
                         
                         # Get AI interpretation of the graph
                         interpretation_prompt = (
@@ -732,7 +738,9 @@ def main_app():
                         ai_interpretation = generate_openai_response(interpretation_prompt)
                         print(f"DEBUG: Graph interpretation response:\n{ai_interpretation}\n---") # Debug print
                         st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
-                        st.session_state.report_content.append({"type": "text", "content": ai_interpretation})
+                        st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Graph Generated: {selected_graph_type}"})
+                        st.session_state.report_content.append({"type": "image", "content": img_buffer, "caption": graph_desc})
+                        st.session_state.report_content.append({"type": "text", "content": ai_interpretation}) # Add interpretation to report
                     else:
                         st.session_state.messages.append({"role": "assistant", "content": graph_desc}) # graph_desc will contain error message
                         st.session_state.report_content.append({"type": "text", "content": graph_desc})
@@ -818,7 +826,7 @@ def main_app():
             # Construct prompt for OpenAI, including data summary and full chat history
             full_prompt = (
                 f"Dataset Summary:\n{st.session_state['data_summary_text']}\n\n"
-                "Conversation History:\n" + "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages]) +
+                "Conversation History:\n" + "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages if m["role"] in ["user", "assistant"]]) + # Filter for AI
                 f"\n\nUser's current message: {prompt}\n\n"
                 "Based on the dataset summary and our conversation, provide tailored preprocessing advice, "
                 "including explanations. Do NOT provide Python code snippets. "
