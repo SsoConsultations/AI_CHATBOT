@@ -125,7 +125,7 @@ def check_openai_api_key():
         st.session_state['openai_client'] = None # Clear client on failure
         return False
     except RateLimitError:
-        st.error("OpenAI API rate limit exceeded. Please try again in a moment.")
+        st.error("OpenAI API rate limit exceeded. Please try again later or check your OpenAI usage.")
         st.session_state['openai_client'] = None # Clear client on failure
         return False
     except Exception as e:
@@ -215,36 +215,42 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
     client_instance = st.session_state.get('openai_client')
 
     if client_instance is None or not st.session_state['openai_client_initialized']:
+        print("DEBUG: OpenAI client not initialized or missing.") # Debug print
         return "AI features are not enabled due to API key issues. Please check your OpenAI API key."
 
     try:
+        print(f"DEBUG: Sending prompt to OpenAI (max_tokens=2000):\n{prompt}\n---") # Debug print
         response = client_instance.chat.completions.create( # Use client_instance here
             model=model,
             messages=[
                 {"role": "system", "content": "You are a data preprocessing expert. Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks) in your responses. Focus on natural language explanations and interpretations. Always ask the user about their goal for the dataset if not specified, or if a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point."},
                 # Only include relevant chat history for AI to avoid exceeding token limits for long conversations
-                # For simplicity, we'll send a limited history, or just the last few turns
-                # For now, sending full history, but be aware of token limits for very long chats
                 *st.session_state.messages[-5:], # Send last 5 messages + current prompt to save tokens
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=1000,
+            max_tokens=2000, # Increased max_tokens for debugging
             top_p=1.0,
             frequency_penalty=0.0,
             presence_penalty=0.0
         )
-        return response.choices[0].message.content
-    except AuthenticationError:
+        ai_response_content = response.choices[0].message.content
+        print(f"DEBUG: Raw OpenAI response received:\n{ai_response_content}\n---") # Debug print
+        return ai_response_content
+    except AuthenticationError as e:
+        print(f"DEBUG: AuthenticationError: {e}") # Debug print
         st.error("OpenAI API Key is invalid during chat. Please check your .streamlit/secrets.toml file.")
         return "I'm sorry, my connection to the AI failed due to an invalid API key. Please contact support."
     except APIConnectionError as e:
+        print(f"DEBUG: APIConnectionError: {e}") # Debug print
         st.error(f"Could not connect to OpenAI API during chat: {e}. Please check your internet connection and firewall settings.")
         return "I'm sorry, I'm having trouble connecting to the AI. Please check your internet connection and try again."
-    except RateLimitError:
+    except RateLimitError as e:
+        print(f"DEBUG: RateLimitError: {e}") # Debug print
         st.error("OpenAI API rate limit exceeded during chat. Please try again in a moment.")
         return "I'm sorry, the AI is experiencing high demand. Please try again in a moment."
     except Exception as e:
+        print(f"DEBUG: General Exception in generate_openai_response: {e}") # Debug print
         st.error(f"An unexpected error occurred during AI response generation: {e}")
         st.exception(e) # Display the full traceback in the Streamlit UI for debugging
         return "I'm sorry, an unexpected error occurred while generating the AI response. Please try again later."
@@ -618,6 +624,7 @@ def main_app():
                     "Based on this, what are the initial preprocessing considerations? "
                     "Please also ask the user about their primary goal (e.g., classification, regression, exploratory analysis) for this dataset."
                 )
+                print(f"DEBUG: Initial AI prompt:\n{initial_ai_prompt}\n---") # Debug print
                 with st.spinner("Analyzing data and generating initial insights..."):
                     initial_response = generate_openai_response(initial_ai_prompt)
                     st.session_state.messages.append({"role": "assistant", "content": initial_response})
@@ -721,7 +728,9 @@ def main_app():
                             "Please provide a concise interpretation of what this graph tells us about the data, "
                             "especially in the context of data preprocessing. Do NOT provide code."
                         )
+                        print(f"DEBUG: Graph interpretation prompt:\n{interpretation_prompt}\n---") # Debug print
                         ai_interpretation = generate_openai_response(interpretation_prompt)
+                        print(f"DEBUG: Graph interpretation response:\n{ai_interpretation}\n---") # Debug print
                         st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
                         st.session_state.report_content.append({"type": "text", "content": ai_interpretation})
                     else:
@@ -786,7 +795,9 @@ def main_app():
                             "focusing on what the p-value means and the implications for the relationship between the variables. "
                             "Do NOT provide code or markdown formatting."
                         )
+                        print(f"DEBUG: Stat test interpretation prompt:\n{interpretation_prompt}\n---") # Debug print
                         ai_interpretation = generate_openai_response(interpretation_prompt)
+                        print(f"DEBUG: Stat test interpretation response:\n{ai_interpretation}\n---") # Debug print
                         st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
                         st.session_state.report_content.append({"type": "text", "content": ai_interpretation})
                 st.rerun()
@@ -813,7 +824,7 @@ def main_app():
                 "including explanations. Do NOT provide Python code snippets. "
                 "If the user has stated a goal, ensure your advice aligns with it."
             )
-
+            print(f"DEBUG: General chat prompt:\n{full_prompt}\n---") # Debug print
             with st.spinner("Generating response..."):
                 response = generate_openai_response(full_prompt)
                 st.session_state.messages.append({"role": "assistant", "content": response})
@@ -848,6 +859,7 @@ def main_app():
                 "Based on this, what are the initial preprocessing considerations? "
                 "Please also ask the user about their primary goal (e.g., classification, regression, exploratory analysis) for this dataset."
             )
+            print(f"DEBUG: Reset chat initial AI prompt:\n{initial_ai_prompt}\n---") # Debug print
             with st.spinner("Analyzing data and generating initial insights..."):
                 initial_response = generate_openai_response(initial_ai_prompt)
                 st.session_state.messages.append({"role": "assistant", "content": initial_response})
