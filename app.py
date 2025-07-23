@@ -325,31 +325,61 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                         # This is plain text
                         p.add_run(part)
         elif item_type == "table":
-            headers = item.get("headers", [])
-            rows = item.get("rows", [])
-            
-            if headers and rows:
+            # Original headers and rows from st.session_state['data_summary_table']
+            original_headers = item.get("headers", []) # ['Column Name', 'Data Type', 'Missing %', 'Stats Summary']
+            original_rows = item.get("rows", []) # [['ID', 'int64', '0.00%', 'Mean: ...'], ...]
+
+            if original_headers and original_rows:
                 # Add a specific sub-heading for the table
                 table_heading = document.add_heading('', level=3)
                 run = table_heading.add_run("Column Details Overview")
                 run.bold = True
 
-                table = document.add_table(rows=1, cols=len(headers))
+                # Define new headers for the Word table
+                # We want "Column Name\n(Type)", "Missing %", "Stats Summary"
+                new_table_headers = ["Column Name\n(Type)", original_headers[2], original_headers[3]]
+                
+                table = document.add_table(rows=1, cols=len(new_table_headers))
                 table.style = 'Table Grid' # Apply a basic table style
 
-                # Add headers
+                # Add new headers to the Word table
                 hdr_cells = table.rows[0].cells
-                for i, header_text in enumerate(headers):
+                for i, header_text in enumerate(new_table_headers):
                     hdr_cells[i].text = header_text
                     # Set header bold
                     for paragraph in hdr_cells[i].paragraphs:
                         for run in paragraph.runs:
                             run.bold = True
 
-                # Add rows
-                for row_data in rows:
+                # Data type short form mapping
+                dtype_map = {
+                    'int64': 'num',
+                    'float64': 'num',
+                    'object': 'str',
+                    'category': 'str',
+                    'datetime64[ns]': 'date', # Pandas datetime dtype often includes [ns]
+                    'datetime64': 'date', # General datetime
+                    'bool': 'bool' # Boolean type
+                }
+
+                # Add rows, transforming the first two columns
+                for row_data in original_rows:
+                    # row_data is like ['ID', 'int64', '0.00%', 'Mean: ...']
+                    col_name = row_data[0]
+                    original_dtype = row_data[1]
+                    # Get short form, default to 'other' if not in map
+                    short_dtype = dtype_map.get(original_dtype, 'other') 
+                    missing_percent = row_data[2]
+                    stats_summary = row_data[3]
+
+                    # Combine column name and short data type for the first cell
+                    combined_col_info = f"{col_name}\n({short_dtype})"
+                    
+                    # Create the new row for the Word table
+                    new_row_for_table = [combined_col_info, missing_percent, stats_summary]
+
                     row_cells = table.add_row().cells
-                    for i, cell_data in enumerate(row_data):
+                    for i, cell_data in enumerate(new_row_for_table):
                         row_cells[i].text = str(cell_data)
         elif item_type == "image":
             # Image data is expected as BytesIO object
