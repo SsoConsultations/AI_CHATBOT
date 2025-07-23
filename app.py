@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import re # For parsing graph requests and markdown bolding
 from scipy import stats # For statistical tests
+import numpy as np # For numerical operations, especially for ANOVA SS calculations
 
 # --- Configuration and Secrets ---
 # IMPORTANT: Create a .streamlit/secrets.toml file in your project root
@@ -437,7 +438,7 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
             except Exception as e:
                 document.add_paragraph(f"Error adding image to report: {e}")
         
-        elif item_type == "stat_table": # NEW: For structured statistical tables
+        elif item_type == "stat_table": # For structured statistical tables
             table_title = item.get("title")
             df_to_add = item.get("dataframe")
 
@@ -555,9 +556,9 @@ def generate_and_display_graph(df, graph_type, columns):
 def perform_statistical_test(df, test_type, col1, col2=None):
     """
     Performs the selected statistical test and returns the results as a formatted string
-    and optionally a pandas DataFrame for structured output.
-    Returns (results_str, results_df, error_message).
-    results_df will be None if not applicable or on error, or a tuple of DataFrames for T-test.
+    and optionally a pandas DataFrame(s) for structured output.
+    Returns (results_str, structured_results_for_ui, error_message).
+    structured_results_for_ui will be None if not applicable or on error, or a DataFrame/tuple of DataFrames.
     """
     results_str = ""
     structured_results_for_ui = None # New: To hold structured results for UI display (e.g., tuple of DFs)
@@ -573,20 +574,63 @@ def perform_statistical_test(df, test_type, col1, col2=None):
             elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
                 error_message = f"ANOVA: Independent variable '{col2}' must be categorical."
             else:
-                groups = [df[col1][df[col2] == g].dropna() for g in df[col2].unique()]
-                append_debug_log(f"DEBUG ANOVA: unique_groups={df[col2].unique()}, len(groups)={len(groups)}")
+                # Drop NaNs from both columns for consistent analysis
+                clean_df = df[[col1, col2]].dropna()
+                
+                groups = [clean_df[col1][clean_df[col2] == g] for g in clean_df[col2].unique()]
+                append_debug_log(f"DEBUG ANOVA: unique_groups={clean_df[col2].unique()}, len(groups)={len(groups)}")
+                
                 if len(groups) < 2:
                     error_message = f"ANOVA: Independent variable '{col2}' needs at least 2 distinct groups."
                 elif any(len(g) == 0 for g in groups):
                     error_message = f"ANOVA: Some groups in '{col2}' have no data for '{col1}' after dropping NaNs."
                 else:
+                    # Perform ANOVA
                     f_statistic, p_value = stats.f_oneway(*groups)
+
+                    # Calculate Sum of Squares (SS) and Degrees of Freedom (df) for ANOVA table
+                    grand_mean = clean_df[col1].mean()
+                    
+                    # Sum of Squares Total (SST)
+                    sst = np.sum((clean_df[col1] - grand_mean)**2)
+                    df_total = len(clean_df) - 1
+
+                    # Sum of Squares Between (SSB)
+                    ssb = 0
+                    for g in clean_df[col2].unique():
+                        group_data = clean_df[col1][clean_df[col2] == g]
+                        ssb += len(group_data) * (group_data.mean() - grand_mean)**2
+                    df_between = len(clean_df[col2].unique()) - 1
+
+                    # Sum of Squares Within (SSW)
+                    ssw = np.sum((clean_df[col1] - clean_df.groupby(col2)[col1].transform('mean'))**2)
+                    df_within = len(clean_df) - len(clean_df[col2].unique())
+
+                    # Mean Squares
+                    msb = ssb / df_between if df_between > 0 else np.nan
+                    msw = ssw / df_within if df_within > 0 else np.nan
+
+                    # F-statistic (re-calculated to match SS/MS for table consistency)
+                    f_stat_calculated = msb / msw if msw > 0 else np.nan
+
+                    # Create ANOVA Summary DataFrame
+                    anova_summary_data = {
+                        'Source of Variation': ['Between Groups', 'Within Groups', 'Total'],
+                        'Sum of Squares (SS)': [ssb, ssw, sst],
+                        'df': [df_between, df_within, df_total],
+                        'Mean Squares (MS)': [msb, msw, np.nan], # MS for Total is not typically reported
+                        'F': [f_stat_calculated, np.nan, np.nan], # F-stat only for Between Groups
+                        'P-value': [p_value, np.nan, np.nan] # P-value only for Between Groups
+                    }
+                    anova_df = pd.DataFrame(anova_summary_data)
+                    
                     results_str = (
                         f"ANOVA Test Results for '{col1}' by '{col2}':\n"
-                        f"  F-statistic: {f_statistic:.4f}\n"
+                        f"  F-statistic: {f_statistic:.4f}\n" # Use scipy's F-stat for the initial text summary
                         f"  P-value: {p_value:.4f}\n"
                         "Interpretation will be provided by the AI."
                     )
+                    structured_results_for_ui = anova_df # Return the single DataFrame
 
         elif test_type == "independent_t_test":
             append_debug_log(f"DEBUG T-test: col1={col1}, col2={col2}")
@@ -784,7 +828,7 @@ def main_app():
             with st.chat_message(message["role"]):
                 if message["role"] == "graph" and "content" in message:
                     st.image(message["content"], caption=message.get("caption", ""), use_container_width=True)
-                elif message["role"] == "dataframe": # NEW: Handle dataframe messages
+                elif message["role"] == "dataframe": # Handle dataframe messages
                     st.subheader(message.get("title", "Statistical Table")) # Display title for the table
                     st.dataframe(message["content"])
                 else:
@@ -917,7 +961,7 @@ def main_app():
                         st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Statistical Test: {selected_test}"})
                         st.session_state.report_content.append({"type": "text", "content": test_results_str})
 
-                        # NEW: Display structured results in UI and add to report
+                        # NEW: Display structured results in UI and add to report based on test type
                         if selected_test == "Independent T-test" and structured_results_for_ui is not None:
                             group_stats_df, test_stats_df = structured_results_for_ui # Unpack the tuple
                             
@@ -928,6 +972,11 @@ def main_app():
                             # Add Test Results table to messages
                             st.session_state.messages.append({"role": "dataframe", "title": "Test Results", "content": test_stats_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": "Test Results", "dataframe": test_stats_df})
+                        
+                        elif selected_test == "ANOVA" and structured_results_for_ui is not None: # NEW: Handle ANOVA structured output
+                            anova_df = structured_results_for_ui # For ANOVA, it's a single DataFrame
+                            st.session_state.messages.append({"role": "dataframe", "title": "ANOVA Summary Table", "content": anova_df})
+                            st.session_state.report_content.append({"type": "stat_table", "title": "ANOVA Summary Table", "dataframe": anova_df})
 
 
                         # Get AI interpretation of the test results
@@ -1051,3 +1100,4 @@ if not st.session_state['logged_in']:
     check_password()
 else:
     main_app()
+    
