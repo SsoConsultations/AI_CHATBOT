@@ -625,9 +625,11 @@ def main_app():
                     df_copy = st.session_state['df'].copy()
                     
                     try:
-                        # Remove '%' and convert to numeric
-                        # Using errors='coerce' to turn unconvertible values into NaN
-                        df_copy[selected_convert_col] = df_copy[selected_convert_col].astype(str).str.replace('%', '').astype(float, errors='coerce')
+                        # Use pd.to_numeric for more robust conversion
+                        df_copy[selected_convert_col] = pd.to_numeric(
+                            df_copy[selected_convert_col].astype(str).str.replace('%', ''), 
+                            errors='coerce' # This will turn unconvertible values into NaN
+                        )
                         
                         # Handle potential NaNs introduced by coerce (optional, but good practice)
                         if df_copy[selected_convert_col].isnull().any():
@@ -764,7 +766,7 @@ def main_app():
             if overview_text_end_index != -1:
                 overview_text = summary_text[:overview_text_end_index].strip()
             else:
-                overview_text = summary_text.strip()
+                overview_text = st.session_state['data_summary_text'].split("Column Details:")[0].strip() # Fallback
             st.session_state['report_content'].append({"type": "text", "content": overview_text})
             st.session_state['report_content'].append({"type": "table", "headers": summary_table[0], "rows": summary_table[1:]})
             
@@ -828,4 +830,3 @@ if not st.session_state['logged_in']:
     check_password()
 else:
     main_app()
-
