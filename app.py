@@ -1146,7 +1146,7 @@ if check_password():
                         st.error(f"Column '{col1_stat}' not found in the dataset.")
                         st.session_state['messages'].append({"role": "assistant", "content": f"I cannot find the column '{col1_stat}' in your dataset. Please check the column name."})
                         st.rerun()
-                        return
+                        
                     if col2_stat and col2_stat not in st.session_state['df'].columns:
                         st.error(f"Column '{col2_stat}' not found in the dataset.")
                         st.session_state['messages'].append({"role": "assistant", "content": f"I cannot find the column '{col2_stat}' in your dataset. Please check the column name."})
