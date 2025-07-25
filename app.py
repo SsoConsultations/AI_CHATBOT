@@ -947,6 +947,16 @@ def perform_statistical_test(df, test_type, col1, col2=None):
 def main_app():
     st.set_page_config(layout="wide", page_title="SSO Data Preprocessing Assistant")
 
+    # --- Logout Button ---
+    if st.session_state.get('logged_in', False):
+        with st.sidebar:
+            st.markdown("---")
+            if st.button("🚪 Logout"):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.success("You have been logged out.")
+                st.experimental_rerun()
+
     # Display Logo at the top of the main app
     st.image("SsoLogo.jpg", width=100) # Adjust width as needed
     st.title("Data Preprocessing Assistant")
