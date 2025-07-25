@@ -84,6 +84,7 @@ def check_password():
         return True
 
     st.title("Login to Data Preprocessing Assistant")
+    st.image("SsoLogo.jpg", width=150)
     st.markdown("---")
 
     with st.form("login_form"):
