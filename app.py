@@ -77,10 +77,10 @@ def append_debug_log(message):
 def check_password():
     """
     Checks if the entered username and password match any of the ones in st.secrets['credentials'].
-    This uses plain-text password comparison as per user's request,
-    acknowledging the security implications.
+    If not logged in, it displays the login form.
+    Returns True if the user is authenticated, False otherwise.
     """
-    if st.session_state['logged_in']:
+    if st.session_state.get('logged_in', False):
         return True
 
     st.title("Login to Data Preprocessing Assistant")
@@ -103,6 +103,10 @@ def check_password():
                     st.error("Invalid username or password.")
             else:
                 st.error("Invalid username or password.")
+    
+    # If control reaches here and not logged in, it means login was not successful
+    # or form was not submitted. The calling 'if not check_password(): st.stop()'
+    # will handle stopping the script.
     return False
 
 def check_openai_api_key():
@@ -909,407 +913,405 @@ def perform_statistical_test(df, test_type, col1, col2=None):
 
 # --- Main Application Logic ---
 
-if check_password():
-    st.sidebar.title(f"Welcome, {st.session_state['current_username']}!")
+# Check password at the very beginning. If not logged in, stop execution.
+if not check_password():
+    st.stop() # This will stop the app from running further if not logged in.
+
+# If execution reaches here, the user is logged in.
+st.sidebar.title(f"Welcome, {st.session_state['current_username']}!")
+
+# Add a logout button to the sidebar
+if st.sidebar.button("Logout"):
+    st.session_state['logged_in'] = False
+    st.session_state['current_username'] = None
+    st.session_state['df'] = None # Clear data on logout
+    st.session_state['data_summary_text'] = ""
+    st.session_state['data_summary_table'] = []
+    st.session_state['messages'] = []
+    st.session_state['report_content'] = []
+    st.session_state['user_goal'] = "Not specified"
+    st.session_state['uploaded_file_name'] = None
+    st.session_state['openai_client_initialized'] = False
+    st.session_state['openai_client'] = None
+    st.session_state['debug_logs'] = [] # Clear debug logs on logout
+    st.rerun()
+
+# Place AI key check here, after successful login
+if not st.session_state['openai_client_initialized']:
+    st.info("Checking OpenAI API key. This may take a moment...")
+    if not check_openai_api_key():
+        st.warning("AI features are disabled due to an invalid or unreachable OpenAI API key. Please configure it in .streamlit/secrets.toml.")
+else:
+    st.sidebar.success("AI features enabled.")
+
+st.title("Data Preprocessing Assistant")
+st.markdown("---")
+
+# File Uploader
+st.sidebar.header("Upload Dataset")
+uploaded_file = st.sidebar.file_uploader("Upload CSV, Excel, or JSON", type=["csv", "xlsx", "xls", "json"])
+
+# Check if a new file has been uploaded or if the session state df is empty
+if uploaded_file is not None and (st.session_state['uploaded_file_name'] != uploaded_file.name or st.session_state['df'] is None):
+    st.session_state['uploaded_file_name'] = uploaded_file.name
     
-    # Add a logout button to the sidebar
-    if st.sidebar.button("Logout"):
-        st.session_state['logged_in'] = False
-        st.session_state['current_username'] = None
-        st.session_state['df'] = None # Clear data on logout
-        st.session_state['data_summary_text'] = ""
-        st.session_state['data_summary_table'] = []
-        st.session_state['messages'] = []
-        st.session_state['report_content'] = []
-        st.session_state['user_goal'] = "Not specified"
-        st.session_state['uploaded_file_name'] = None
-        st.session_state['openai_client_initialized'] = False
-        st.session_state['openai_client'] = None
-        st.session_state['debug_logs'] = [] # Clear debug logs on logout
-        st.rerun()
+    # Reset session state variables related to the dataset and chat history
+    st.session_state['df'] = None
+    st.session_state['data_summary_text'] = ""
+    st.session_state['data_summary_table'] = []
+    st.session_state['messages'] = [] # Clear chat messages for new dataset
+    st.session_state['report_content'] = [] # Clear report content for new dataset
+    st.session_state['user_goal'] = "Not specified" # Reset user goal
+    st.session_state['debug_logs'] = [] # Clear debug logs on new upload
+    
+    append_debug_log(f"DEBUG: New file uploaded: {uploaded_file.name}") # Debug print
 
-    # Place AI key check here, after successful login
-    if not st.session_state['openai_client_initialized']:
-        st.info("Checking OpenAI API key. This may take a moment...")
-        if not check_openai_api_key():
-            st.warning("AI features are disabled due to an invalid or unreachable OpenAI API key. Please configure it in .streamlit/secrets.toml.")
-    else:
-        st.sidebar.success("AI features enabled.")
-
-    st.title("Data Preprocessing Assistant")
-    st.markdown("---")
-
-    # File Uploader
-    st.sidebar.header("Upload Dataset")
-    uploaded_file = st.sidebar.file_uploader("Upload CSV, Excel, or JSON", type=["csv", "xlsx", "xls", "json"])
-
-    # Check if a new file has been uploaded or if the session state df is empty
-    if uploaded_file is not None and (st.session_state['uploaded_file_name'] != uploaded_file.name or st.session_state['df'] is None):
-        st.session_state['uploaded_file_name'] = uploaded_file.name
-        
-        # Reset session state variables related to the dataset and chat history
-        st.session_state['df'] = None
-        st.session_state['data_summary_text'] = ""
-        st.session_state['data_summary_table'] = []
-        st.session_state['messages'] = [] # Clear chat messages for new dataset
-        st.session_state['report_content'] = [] # Clear report content for new dataset
-        st.session_state['user_goal'] = "Not specified" # Reset user goal
-        st.session_state['debug_logs'] = [] # Clear debug logs on new upload
-        
-        append_debug_log(f"DEBUG: New file uploaded: {uploaded_file.name}") # Debug print
-
-        with st.spinner("Loading and analyzing data..."):
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    st.session_state['df'] = pd.read_csv(uploaded_file)
-                elif uploaded_file.name.endswith(('.xlsx', '.xls')):
-                    st.session_state['df'] = pd.read_excel(uploaded_file)
-                elif uploaded_file.name.endswith('.json'):
-                    st.session_state['df'] = pd.read_json(uploaded_file)
-                
-                st.sidebar.success(f"Successfully loaded {uploaded_file.name}")
-                st.write("### Raw Data Preview")
-                st.dataframe(st.session_state['df'].head())
-                
-                # Generate and store summary for AI and report
-                summary_text, summary_table = get_data_summary(st.session_state['df'])
-                st.session_state['data_summary_text'] = summary_text
-                st.session_state['data_summary_table'] = summary_table
-
-                # Add initial data summary to report content
-                st.session_state['report_content'].append({"type": "heading", "content": "1. Dataset Overview", "level": 2})
-                st.session_state['report_content'].append({"type": "text", "content": summary_text})
-                st.session_state['report_content'].append({"type": "table", "headers": summary_table[0], "rows": summary_table[1:]})
-
-                # Add an initial message to the chat history
-                initial_response = (
-                    f"Successfully loaded '{uploaded_file.name}'. "
-                    "I've generated an initial summary of your dataset. "
-                    "What is your goal with this dataset? "
-                    "For example, 'I want to clean the data for machine learning' or 'I need to explore relationships between variables'."
-                )
-                st.session_state['messages'].append({"role": "assistant", "content": initial_response})
-                st.rerun() # Rerun to display initial messages and summary
-                
-            except Exception as e:
-                st.sidebar.error(f"Error loading file: {e}")
-                st.session_state['df'] = None # Clear df if loading fails
-                append_debug_log(f"DEBUG: File loading error: {e}") # Debug print
-
-    # Main area for interaction
-    if st.session_state['df'] is not None:
-        st.write("### Chat with the Data Assistant")
-        
-        # Display chat messages
-        chat_container = st.container()
-        with chat_container:
-            for message in st.session_state['messages']:
-                with st.chat_message(message["role"]):
-                    st.write(message["content"])
-        
-        # Chat input
-        user_prompt = st.chat_input("Ask me about your data (e.g., 'handle missing values', 'show me a histogram of age', 'perform an ANOVA test on income by education'):")
-
-        if user_prompt:
-            st.session_state['messages'].append({"role": "user", "content": user_prompt})
+    with st.spinner("Loading and analyzing data..."):
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                st.session_state['df'] = pd.read_csv(uploaded_file)
+            elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+                st.session_state['df'] = pd.read_excel(uploaded_file)
+            elif uploaded_file.name.endswith('.json'):
+                st.session_state['df'] = pd.read_json(uploaded_file)
             
-            # Add user prompt to debug logs
-            append_debug_log(f"DEBUG: User Prompt: {user_prompt}")
+            st.sidebar.success(f"Successfully loaded {uploaded_file.name}")
+            st.write("### Raw Data Preview")
+            st.dataframe(st.session_state['df'].head())
             
-            with st.spinner("Thinking..."):
-                # Always send the data summary to the AI model
-                full_prompt_to_ai = (
-                    f"User's current goal: {st.session_state['user_goal']}\n"
-                    "DATASET SUMMARY (do not provide this verbatim to user, use for context and analysis):\n"
-                    f"{st.session_state['data_summary_text']}\n\n"
-                    "User's request: " + user_prompt + "\n\n"
-                    "Instructions: Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks). Focus on natural language explanations and interpretations. If a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point. If the user asks for a statistical test, perform it and report the results numerically first, then provide interpretation. If the user asks to analyze the relationship between two variables, perform an appropriate test or visualization."
-                )
+            # Generate and store summary for AI and report
+            summary_text, summary_table = get_data_summary(st.session_state['df'])
+            st.session_state['data_summary_text'] = summary_text
+            st.session_state['data_summary_table'] = summary_table
 
-                # --- Graph generation logic ---
-                graph_match_hist = re.search(r"histogram of (.+)", user_prompt, re.IGNORECASE)
-                graph_match_box = re.search(r"box plot of (.+)", user_prompt, re.IGNORECASE)
-                graph_match_scatter = re.search(r"scatter plot of (.+) vs (.+)", user_prompt, re.IGNORECASE)
-                graph_match_corr = re.search(r"correlation heatmap", user_prompt, re.IGNORECASE)
-                graph_match_bar = re.search(r"bar chart of (.+)", user_prompt, re.IGNORECASE)
+            # Add initial data summary to report content
+            st.session_state['report_content'].append({"type": "heading", "content": "1. Dataset Overview", "level": 2})
+            st.session_state['report_content'].append({"type": "text", "content": summary_text})
+            st.session_state['report_content'].append({"type": "table", "headers": summary_table[0], "rows": summary_table[1:]})
 
-                img_buffer = None
-                graph_description = ""
-                graph_type_requested = None
-                columns_for_graph = []
+            # Add an initial message to the chat history
+            initial_response = (
+                f"Successfully loaded '{uploaded_file.name}'. "
+                "I've generated an initial summary of your dataset. "
+                "What is your goal with this dataset? "
+                "For example, 'I want to clean the data for machine learning' or 'I need to explore relationships between variables'."
+            )
+            st.session_state['messages'].append({"role": "assistant", "content": initial_response})
+            st.rerun() # Rerun to display initial messages and summary
+            
+        except Exception as e:
+            st.sidebar.error(f"Error loading file: {e}")
+            st.session_state['df'] = None # Clear df if loading fails
+            append_debug_log(f"DEBUG: File loading error: {e}") # Debug print
 
-                if graph_match_hist:
-                    graph_type_requested = "histogram"
-                    columns_for_graph = [graph_match_hist.group(1).strip()]
-                elif graph_match_box:
-                    graph_type_requested = "box_plot"
-                    columns_for_graph = [graph_match_box.group(1).strip()]
-                elif graph_match_scatter:
-                    graph_type_requested = "scatter_plot"
-                    columns_for_graph = [graph_match_scatter.group(1).strip(), graph_match_scatter.group(2).strip()]
-                elif graph_match_corr:
-                    graph_type_requested = "correlation_heatmap"
-                elif graph_match_bar:
-                    graph_type_requested = "bar_chart"
-                    columns_for_graph = [graph_match_bar.group(1).strip()]
+# Main area for interaction
+if st.session_state['df'] is not None:
+    st.write("### Chat with the Data Assistant")
+    
+    # Display chat messages
+    chat_container = st.container()
+    with chat_container:
+        for message in st.session_state['messages']:
+            with st.chat_message(message["role"]):
+                st.write(message["content"])
+    
+    # Chat input
+    user_prompt = st.chat_input("Ask me about your data (e.g., 'handle missing values', 'show me a histogram of age', 'perform an ANOVA test on income by education'):")
 
-                if graph_type_requested:
-                    append_debug_log(f"DEBUG: Attempting to generate graph type: {graph_type_requested} with columns: {columns_for_graph}")
-                    img_buffer, graph_description = generate_and_display_graph(st.session_state['df'], graph_type_requested, columns_for_graph)
-                    
-                    if img_buffer:
-                        # Display graph in the main app
-                        st.image(img_buffer, caption=graph_description, use_column_width=True)
-                        st.session_state['messages'].append({"role": "assistant", "content": f"Here is the requested graph: {graph_description}"})
-                        # Add graph to report content
-                        img_buffer.seek(0) # Rewind for report
-                        st.session_state['report_content'].append({"type": "image", "content": img_buffer.getvalue(), "caption": graph_description})
-                        
-                        # Get AI interpretation for the graph
-                        interpretation_prompt = (
-                            f"Based on the following graph description and the dataset summary, provide a concise interpretation. "
-                            f"Graph: {graph_description}. Dataset Summary:\n{st.session_state['data_summary_text']}\n\n"
-                            f"Provide only the interpretation, no other text or formatting."
-                        )
-                        ai_interpretation = generate_openai_response(interpretation_prompt)
-                        if ai_interpretation:
-                            st.write(f"**AI Interpretation:** {ai_interpretation}")
-                            st.session_state['messages'].append({"role": "assistant", "content": f"AI Interpretation: {ai_interpretation}"})
-                            st.session_state['report_content'].append({"type": "text", "content": f"**AI Interpretation:** {ai_interpretation}"})
+    if user_prompt:
+        st.session_state['messages'].append({"role": "user", "content": user_prompt})
+        
+        # Add user prompt to debug logs
+        append_debug_log(f"DEBUG: User Prompt: {user_prompt}")
+        
+        with st.spinner("Thinking..."):
+            # Always send the data summary to the AI model
+            full_prompt_to_ai = (
+                f"User's current goal: {st.session_state['user_goal']}\n"
+                "DATASET SUMMARY (do not provide this verbatim to user, use for context and analysis):\n"
+                f"{st.session_state['data_summary_text']}\n\n"
+                "User's request: " + user_prompt + "\n\n"
+                "Instructions: Provide clear, concise, and actionable advice. Do NOT use any markdown formatting (like bolding, italics, code blocks). Focus on natural language explanations and interpretations. If a graph is generated, provide an interpretation of that graph. Keep responses concise and to the point. If the user asks for a statistical test, perform it and report the results numerically first, then provide interpretation. If the user asks to analyze the relationship between two variables, perform an appropriate test or visualization."
+            )
 
-                    else:
-                        st.error(graph_description) # Display error message from graph function
-                        st.session_state['messages'].append({"role": "assistant", "content": f"I couldn't generate the graph: {graph_description}"})
+            # --- Graph generation logic ---
+            graph_match_hist = re.search(r"histogram of (.+)", user_prompt, re.IGNORECASE)
+            graph_match_box = re.search(r"box plot of (.+)", user_prompt, re.IGNORECASE)
+            graph_match_scatter = re.search(r"scatter plot of (.+) vs (.+)", user_prompt, re.IGNORECASE)
+            graph_match_corr = re.search(r"correlation heatmap", user_prompt, re.IGNORECASE)
+            graph_match_bar = re.search(r"bar chart of (.+)", user_prompt, re.IGNORECASE)
+
+            img_buffer = None
+            graph_description = ""
+            graph_type_requested = None
+            columns_for_graph = []
+
+            if graph_match_hist:
+                graph_type_requested = "histogram"
+                columns_for_graph = [graph_match_hist.group(1).strip()]
+            elif graph_match_box:
+                graph_type_requested = "box_plot"
+                columns_for_graph = [graph_match_box.group(1).strip()]
+            elif graph_match_scatter:
+                graph_type_requested = "scatter_plot"
+                columns_for_graph = [graph_match_scatter.group(1).strip(), graph_match_scatter.group(2).strip()]
+            elif graph_match_corr:
+                graph_type_requested = "correlation_heatmap"
+            elif graph_match_bar:
+                graph_type_requested = "bar_chart"
+                columns_for_graph = [graph_match_bar.group(1).strip()]
+
+            if graph_type_requested:
+                append_debug_log(f"DEBUG: Attempting to generate graph type: {graph_type_requested} with columns: {columns_for_graph}")
+                img_buffer, graph_description = generate_and_display_graph(st.session_state['df'], graph_type_requested, columns_for_graph)
                 
-                # --- Statistical Test Logic ---
-                stat_test_requested = None
-                col1_stat = None
-                col2_stat = None
-                
-                # Pattern for ANOVA (numerical by categorical)
-                anova_match = re.search(r"anova test on (.+) by (.+)", user_prompt, re.IGNORECASE)
-                # Pattern for Independent T-test (numerical by binary categorical)
-                t_test_ind_match = re.search(r"independent t-test on (.+) by (.+)", user_prompt, re.IGNORECASE)
-                # Pattern for Chi-squared test (categorical by categorical)
-                chi_squared_match = re.search(r"chi-squared test on (.+) and (.+)", user_prompt, re.IGNORECASE)
-                # Pattern for Paired T-test (numerical before/after)
-                paired_t_test_match = re.search(r"paired t-test on (.+) and (.+)", user_prompt, re.IGNORECASE)
-                # Pattern for Pearson Correlation (numerical vs numerical)
-                pearson_corr_match = re.search(r"(?:pearson|correlation) (?:coefficient|test) on (.+) and (.+)", user_prompt, re.IGNORECASE)
-                # Pattern for Spearman Rank Correlation (numerical/ordinal vs numerical/ordinal)
-                spearman_corr_match = re.search(r"spearman(?: rank)? correlation on (.+) and (.+)", user_prompt, re.IGNORECASE)
-                # Pattern for F-test for variances (numerical vs numerical for variances)
-                f_test_var_match = re.search(r"f-test for variances on (.+) and (.+)", user_prompt, re.IGNORECASE)
-                # NEW: Pattern for Shapiro-Wilk Test
-                shapiro_match = re.search(r"(?:shapiro|shapiro-wilk) test on (.+)", user_prompt, re.IGNORECASE)
-
-
-                if anova_match:
-                    stat_test_requested = "anova"
-                    col1_stat = anova_match.group(1).strip() # Dependent (numerical)
-                    col2_stat = anova_match.group(2).strip() # Independent (categorical)
-                elif t_test_ind_match:
-                    stat_test_requested = "independent_t_test"
-                    col1_stat = t_test_ind_match.group(1).strip() # Numerical variable
-                    col2_stat = t_test_ind_match.group(2).strip() # Grouping variable (binary categorical)
-                elif chi_squared_match:
-                    stat_test_requested = "chi_squared_test"
-                    col1_stat = chi_squared_match.group(1).strip() # Categorical 1
-                    col2_stat = chi_squared_match.group(2).strip() # Categorical 2
-                elif paired_t_test_match:
-                    stat_test_requested = "paired_t_test"
-                    col1_stat = paired_t_test_match.group(1).strip() # Numerical 1 (e.g., before)
-                    col2_stat = paired_t_test_match.group(2).strip() # Numerical 2 (e.g., after)
-                elif pearson_corr_match:
-                    stat_test_requested = "pearson_correlation"
-                    col1_stat = pearson_corr_match.group(1).strip()
-                    col2_stat = pearson_corr_match.group(2).strip()
-                elif spearman_corr_match:
-                    stat_test_requested = "spearman_rank_correlation"
-                    col1_stat = spearman_corr_match.group(1).strip()
-                    col2_stat = spearman_corr_match.group(2).strip()
-                elif f_test_var_match:
-                    stat_test_requested = "f_test_two_sample_for_variances"
-                    col1_stat = f_test_var_match.group(1).strip()
-                    col2_stat = f_test_var_match.group(2).strip()
-                elif shapiro_match: # NEW SHAPIRO MATCH
-                    stat_test_requested = "shapiro_test"
-                    col1_stat = shapiro_match.group(1).strip()
-                    col2_stat = None # Shapiro test only takes one column
-
-
-                if stat_test_requested:
-                    append_debug_log(f"DEBUG: Attempting to perform statistical test: {stat_test_requested} with columns: {col1_stat}, {col2_stat}")
+                if img_buffer:
+                    # Display graph in the main app
+                    st.image(img_buffer, caption=graph_description, use_column_width=True)
+                    st.session_state['messages'].append({"role": "assistant", "content": f"Here is the requested graph: {graph_description}"})
+                    # Add graph to report content
+                    img_buffer.seek(0) # Rewind for report
+                    st.session_state['report_content'].append({"type": "image", "content": img_buffer.getvalue(), "caption": graph_description})
                     
-                    # Check if columns exist in DataFrame (only col1_stat needs to be checked for Shapiro)
-                    if col1_stat not in st.session_state['df'].columns:
-                        st.error(f"Column '{col1_stat}' not found in the dataset.")
-                        st.session_state['messages'].append({"role": "assistant", "content": f"I cannot find the column '{col1_stat}' in your dataset. Please check the column name."})
-                        st.rerun()
-                        # Removed 'return' here as st.rerun() already stops execution.
-                    if col2_stat and col2_stat not in st.session_state['df'].columns:
-                        st.error(f"Column '{col2_stat}' not found in the dataset.")
-                        st.session_state['messages'].append({"role": "assistant", "content": f"I cannot find the column '{col2_stat}' in your dataset. Please check the column name."})
-                        st.rerun()
-                        # Removed 'return' here as st.rerun() already stops execution.
-
-                    test_results_str, structured_results, test_error = perform_statistical_test(
-                        st.session_state['df'], stat_test_requested, col1_stat, col2_stat
+                    # Get AI interpretation for the graph
+                    interpretation_prompt = (
+                        f"Based on the following graph description and the dataset summary, provide a concise interpretation. "
+                        f"Graph: {graph_description}. Dataset Summary:\n{st.session_state['data_summary_text']}\n\n"
+                        f"Provide only the interpretation, no other text or formatting."
                     )
+                    ai_interpretation = generate_openai_response(interpretation_prompt)
+                    if ai_interpretation:
+                        st.write(f"**AI Interpretation:** {ai_interpretation}")
+                        st.session_state['messages'].append({"role": "assistant", "content": f"AI Interpretation: {ai_interpretation}"})
+                        st.session_state['report_content'].append({"type": "text", "content": f"**AI Interpretation:** {ai_interpretation}"})
 
-                    if test_error:
-                        st.error(test_error)
-                        st.session_state['messages'].append({"role": "assistant", "content": f"I couldn't perform the statistical test: {test_error}"})
-                    else:
-                        st.write("### Statistical Test Results")
-                        st.write(test_results_str)
-                        st.session_state['messages'].append({"role": "assistant", "content": test_results_str})
-                        
-                        # Display structured results in UI and add to report
-                        if structured_results is not None:
-                            if isinstance(structured_results, pd.DataFrame):
-                                st.dataframe(structured_results)
+                else:
+                    st.error(graph_description) # Display error message from graph function
+                    st.session_state['messages'].append({"role": "assistant", "content": f"I couldn't generate the graph: {graph_description}"})
+            
+            # --- Statistical Test Logic ---
+            stat_test_requested = None
+            col1_stat = None
+            col2_stat = None
+            
+            # Pattern for ANOVA (numerical by categorical)
+            anova_match = re.search(r"anova test on (.+) by (.+)", user_prompt, re.IGNORECASE)
+            # Pattern for Independent T-test (numerical by binary categorical)
+            t_test_ind_match = re.search(r"independent t-test on (.+) by (.+)", user_prompt, re.IGNORECASE)
+            # Pattern for Chi-squared test (categorical by categorical)
+            chi_squared_match = re.search(r"chi-squared test on (.+) and (.+)", user_prompt, re.IGNORECASE)
+            # Pattern for Paired T-test (numerical before/after)
+            paired_t_test_match = re.search(r"paired t-test on (.+) and (.+)", user_prompt, re.IGNORECASE)
+            # Pattern for Pearson Correlation (numerical vs numerical)
+            pearson_corr_match = re.search(r"(?:pearson|correlation) (?:coefficient|test) on (.+) and (.+)", user_prompt, re.IGNORECASE)
+            # Pattern for Spearman Rank Correlation (numerical/ordinal vs numerical/ordinal)
+            spearman_corr_match = re.search(r"spearman(?: rank)? correlation on (.+) and (.+)", user_prompt, re.IGNORECASE)
+            # Pattern for F-test for variances (numerical vs numerical for variances)
+            f_test_var_match = re.search(r"f-test for variances on (.+) and (.+)", user_prompt, re.IGNORECASE)
+            # NEW: Pattern for Shapiro-Wilk Test
+            shapiro_match = re.search(r"(?:shapiro|shapiro-wilk) test on (.+)", user_prompt, re.IGNORECASE)
+
+
+            if anova_match:
+                stat_test_requested = "anova"
+                col1_stat = anova_match.group(1).strip() # Dependent (numerical)
+                col2_stat = anova_match.group(2).strip() # Independent (categorical)
+            elif t_test_ind_match:
+                stat_test_requested = "independent_t_test"
+                col1_stat = t_test_ind_match.group(1).strip() # Numerical variable
+                col2_stat = t_test_ind_match.group(2).strip() # Grouping variable (binary categorical)
+            elif chi_squared_match:
+                stat_test_requested = "chi_squared_test"
+                col1_stat = chi_squared_match.group(1).strip() # Categorical 1
+                col2_stat = chi_squared_match.group(2).strip() # Categorical 2
+            elif paired_t_test_match:
+                stat_test_requested = "paired_t_test"
+                col1_stat = paired_t_test_match.group(1).strip() # Numerical 1 (e.g., before)
+                col2_stat = paired_t_test_match.group(2).strip() # Numerical 2 (e.g., after)
+            elif pearson_corr_match:
+                stat_test_requested = "pearson_correlation"
+                col1_stat = pearson_corr_match.group(1).strip()
+                col2_stat = pearson_corr_match.group(2).strip()
+            elif spearman_corr_match:
+                stat_test_requested = "spearman_rank_correlation"
+                col1_stat = spearman_corr_match.group(1).strip()
+                col2_stat = spearman_corr_match.group(2).strip()
+            elif f_test_var_match:
+                stat_test_requested = "f_test_two_sample_for_variances"
+                col1_stat = f_test_var_match.group(1).strip()
+                col2_stat = f_test_var_match.group(2).strip()
+            elif shapiro_match: # NEW SHAPIRO MATCH
+                stat_test_requested = "shapiro_test"
+                col1_stat = shapiro_match.group(1).strip()
+                col2_stat = None # Shapiro test only takes one column
+
+
+            if stat_test_requested:
+                append_debug_log(f"DEBUG: Attempting to perform statistical test: {stat_test_requested} with columns: {col1_stat}, {col2_stat}")
+                
+                # Check if columns exist in DataFrame (only col1_stat needs to be checked for Shapiro)
+                if col1_stat not in st.session_state['df'].columns:
+                    st.error(f"Column '{col1_stat}' not found in the dataset.")
+                    st.session_state['messages'].append({"role": "assistant", "content": f"I cannot find the column '{col1_stat}' in your dataset. Please check the column name."})
+                    st.rerun()
+                if col2_stat and col2_stat not in st.session_state['df'].columns:
+                    st.error(f"Column '{col2_stat}' not found in the dataset.")
+                    st.session_state['messages'].append({"role": "assistant", "content": f"I cannot find the column '{col2_stat}' in your dataset. Please check the column name."})
+                    st.rerun()
+
+                test_results_str, structured_results, test_error = perform_statistical_test(
+                    st.session_state['df'], stat_test_requested, col1_stat, col2_stat
+                )
+
+                if test_error:
+                    st.error(test_error)
+                    st.session_state['messages'].append({"role": "assistant", "content": f"I couldn't perform the statistical test: {test_error}"})
+                else:
+                    st.write("### Statistical Test Results")
+                    st.write(test_results_str)
+                    st.session_state['messages'].append({"role": "assistant", "content": test_results_str})
+                    
+                    # Display structured results in UI and add to report
+                    if structured_results is not None:
+                        if isinstance(structured_results, pd.DataFrame):
+                            st.dataframe(structured_results)
+                            st.session_state['report_content'].append({
+                                "type": "stat_table",
+                                "title": f"Results for {stat_test_requested.replace('_', ' ').title()}",
+                                "dataframe": structured_results
+                            })
+                        elif isinstance(structured_results, tuple):
+                            # Handle tuples of DataFrames (e.g., T-test, Chi-squared)
+                            if stat_test_requested == "independent_t_test":
+                                group_stats_df, test_stats_df = structured_results
+                                st.write("#### Group Statistics")
+                                st.dataframe(group_stats_df)
                                 st.session_state['report_content'].append({
                                     "type": "stat_table",
-                                    "title": f"Results for {stat_test_requested.replace('_', ' ').title()}",
-                                    "dataframe": structured_results
+                                    "title": "Group Statistics",
+                                    "dataframe": group_stats_df
                                 })
-                            elif isinstance(structured_results, tuple):
-                                # Handle tuples of DataFrames (e.g., T-test, Chi-squared)
-                                if stat_test_requested == "independent_t_test":
-                                    group_stats_df, test_stats_df = structured_results
-                                    st.write("#### Group Statistics")
-                                    st.dataframe(group_stats_df)
-                                    st.session_state['report_content'].append({
-                                        "type": "stat_table",
-                                        "title": "Group Statistics",
-                                        "dataframe": group_stats_df
-                                    })
-                                    st.write("#### Test Results")
-                                    st.dataframe(test_stats_df)
-                                    st.session_state['report_content'].append({
-                                        "type": "stat_table",
-                                        "title": "Test Results",
-                                        "dataframe": test_stats_df
-                                    })
-                                elif stat_test_requested == "chi_squared_test":
-                                    observed_df, expected_df, chi2_val, p_val, dof_val = structured_results
-                                    st.write("#### Observed Frequencies")
-                                    st.dataframe(observed_df)
-                                    st.session_state['report_content'].append({
-                                        "type": "stat_table",
-                                        "title": "Observed Frequencies",
-                                        "dataframe": observed_df
-                                    })
-                                    st.write("#### Expected Frequencies")
-                                    st.dataframe(expected_df)
-                                    st.session_state['report_content'].append({
-                                        "type": "stat_table",
-                                        "title": "Expected Frequencies",
-                                        "dataframe": expected_df
-                                    })
-                                    st.write(f"Chi-squared = {chi2_val:.4f}, p-value = {p_val:.4f}, df = {dof_val}")
-                                    st.session_state['report_content'].append({
-                                        "type": "text",
-                                        "content": f"Chi-squared = {chi2_val:.4f}, p-value = {p_val:.4f}, df = {dof_val}"
-                                    })
-                                elif stat_test_requested == "paired_t_test":
-                                    group_stats_df, test_stats_df = structured_results
-                                    st.write("#### Paired Sample Statistics")
-                                    st.dataframe(group_stats_df)
-                                    st.session_state['report_content'].append({
-                                        "type": "stat_table",
-                                        "title": "Paired Sample Statistics",
-                                        "dataframe": group_stats_df
-                                    })
-                                    st.write("#### Paired Sample Test Results")
-                                    st.dataframe(test_stats_df)
-                                    st.session_state['report_content'].append({
-                                        "type": "stat_table",
-                                        "title": "Paired Sample Test Results",
-                                        "dataframe": test_stats_df
-                                    })
-                                elif stat_test_requested == "f_test_two_sample_for_variances":
-                                    variance_stats_df, f_test_results_df = structured_results
-                                    st.write("#### Variance Statistics")
-                                    st.dataframe(variance_stats_df)
-                                    st.session_state['report_content'].append({
-                                        "type": "stat_table",
-                                        "title": "Variance Statistics",
-                                        "dataframe": variance_stats_df
-                                    })
-                                    st.write("#### F-Test for Variances Results")
-                                    st.dataframe(f_test_results_df)
-                                    st.session_state['report_content'].append({
-                                        "type": "stat_table",
-                                        "title": "F-Test for Variances Results",
-                                        "dataframe": f_test_results_df
-                                    })
+                                st.write("#### Test Results")
+                                st.dataframe(test_stats_df)
+                                st.session_state['report_content'].append({
+                                    "type": "stat_table",
+                                    "title": "Test Results",
+                                    "dataframe": test_stats_df
+                                })
+                            elif stat_test_requested == "chi_squared_test":
+                                observed_df, expected_df, chi2_val, p_val, dof_val = structured_results
+                                st.write("#### Observed Frequencies")
+                                st.dataframe(observed_df)
+                                st.session_state['report_content'].append({
+                                    "type": "stat_table",
+                                    "title": "Observed Frequencies",
+                                    "dataframe": observed_df
+                                })
+                                st.write("#### Expected Frequencies")
+                                st.dataframe(expected_df)
+                                st.session_state['report_content'].append({
+                                    "type": "stat_table",
+                                    "title": "Expected Frequencies",
+                                    "dataframe": expected_df
+                                })
+                                st.write(f"Chi-squared = {chi2_val:.4f}, p-value = {p_val:.4f}, df = {dof_val}")
+                                st.session_state['report_content'].append({
+                                    "type": "text",
+                                    "content": f"Chi-squared = {chi2_val:.4f}, p-value = {p_val:.4f}, df = {dof_val}"
+                                })
+                            elif stat_test_requested == "paired_t_test":
+                                group_stats_df, test_stats_df = structured_results
+                                st.write("#### Paired Sample Statistics")
+                                st.dataframe(group_stats_df)
+                                st.session_state['report_content'].append({
+                                    "type": "stat_table",
+                                    "title": "Paired Sample Statistics",
+                                    "dataframe": group_stats_df
+                                })
+                                st.write("#### Paired Sample Test Results")
+                                st.dataframe(test_stats_df)
+                                st.session_state['report_content'].append({
+                                    "type": "stat_table",
+                                    "title": "Paired Sample Test Results",
+                                    "dataframe": test_stats_df
+                                })
+                            elif stat_test_requested == "f_test_two_sample_for_variances":
+                                variance_stats_df, f_test_results_df = structured_results
+                                st.write("#### Variance Statistics")
+                                st.dataframe(variance_stats_df)
+                                st.session_state['report_content'].append({
+                                    "type": "stat_table",
+                                    "title": "Variance Statistics",
+                                    "dataframe": variance_stats_df
+                                })
+                                st.write("#### F-Test for Variances Results")
+                                st.dataframe(f_test_results_df)
+                                st.session_state['report_content'].append({
+                                    "type": "stat_table",
+                                    "title": "F-Test for Variances Results",
+                                    "dataframe": f_test_results_df
+                                })
 
 
-                        # Get AI interpretation for the statistical test
-                        interpretation_prompt = (
-                            f"Based on the following statistical test results and the dataset summary, provide a concise interpretation of the findings. "
-                            f"Test Results:\n{test_results_str}\n\n"
-                            f"Dataset Summary:\n{st.session_state['data_summary_text']}\n\n"
-                            f"Provide only the interpretation, no other text or formatting."
-                        )
-                        ai_interpretation = generate_openai_response(interpretation_prompt)
-                        if ai_interpretation:
-                            st.write(f"**AI Interpretation:** {ai_interpretation}")
-                            st.session_state['messages'].append({"role": "assistant", "content": f"AI Interpretation: {ai_interpretation}"})
-                            st.session_state['report_content'].append({"type": "text", "content": f"**AI Interpretation:** {ai_interpretation}"})
-                    
-                    st.rerun() # Rerun to display test results
+                    # Get AI interpretation for the statistical test
+                    interpretation_prompt = (
+                        f"Based on the following statistical test results and the dataset summary, provide a concise interpretation of the findings. "
+                        f"Test Results:\n{test_results_str}\n\n"
+                        f"Dataset Summary:\n{st.session_state['data_summary_text']}\n\n"
+                        f"Provide only the interpretation, no other text or formatting."
+                    )
+                    ai_interpretation = generate_openai_response(interpretation_prompt)
+                    if ai_interpretation:
+                        st.write(f"**AI Interpretation:** {ai_interpretation}")
+                        st.session_state['messages'].append({"role": "assistant", "content": f"AI Interpretation: {ai_interpretation}"})
+                        st.session_state['report_content'].append({"type": "text", "content": f"**AI Interpretation:** {ai_interpretation}"})
+                
+                st.rerun() # Rerun to display test results
 
-                # --- Handle user goal update ---
-                goal_match = re.search(r"(my goal is|i want to|i need to) (.+)", user_prompt, re.IGNORECASE)
-                if goal_match:
-                    st.session_state['user_goal'] = goal_match.group(2).strip()
-                    response_content = f"Understood! Your goal is: {st.session_state['user_goal']}. How can I help you achieve this goal with your dataset?"
-                    st.session_state['messages'].append({"role": "assistant", "content": response_content})
-                    st.rerun()
-                elif not graph_type_requested and not stat_test_requested: # If not a graph or stat test, send to general AI
-                    ai_response = generate_openai_response(full_prompt_to_ai)
-                    st.session_state['messages'].append({"role": "assistant", "content": ai_response})
-                    st.session_state['report_content'].append({"type": "text", "content": ai_response})
-                    st.rerun()
+            # --- Handle user goal update ---
+            goal_match = re.search(r"(my goal is|i want to|i need to) (.+)", user_prompt, re.IGNORECASE)
+            if goal_match:
+                st.session_state['user_goal'] = goal_match.group(2).strip()
+                response_content = f"Understood! Your goal is: {st.session_state['user_goal']}. How can I help you achieve this goal with your dataset?"
+                st.session_state['messages'].append({"role": "assistant", "content": response_content})
+                st.rerun()
+            elif not graph_type_requested and not stat_test_requested: # If not a graph or stat test, send to general AI
+                ai_response = generate_openai_response(full_prompt_to_ai)
+                st.session_state['messages'].append({"role": "assistant", "content": ai_response})
+                st.session_state['report_content'].append({"type": "text", "content": ai_response})
+                st.rerun()
 
 
-    # Download Report Button
-    if st.sidebar.button("Generate & Download Report"):
-        if st.session_state['df'] is not None:
-            with st.spinner("Generating report..."):
-                report_buffer = create_report_doc(st.session_state['report_content'])
-                st.sidebar.download_button(
-                    label="Download Report (.docx)",
-                    data=report_buffer,
-                    file_name="Data_Preprocessing_Report.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    key="download_report_button"
-                )
-        else:
-            st.sidebar.warning("Please upload a dataset first to generate a report.")
+# Download Report Button
+if st.sidebar.button("Generate & Download Report"):
+    if st.session_state['df'] is not None:
+        with st.spinner("Generating report..."):
+            report_buffer = create_report_doc(st.session_state['report_content'])
+            st.sidebar.download_button(
+                label="Download Report (.docx)",
+                data=report_buffer,
+                file_name="Data_Preprocessing_Report.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="download_report_button"
+            )
+    else:
+        st.sidebar.warning("Please upload a dataset first to generate a report.")
 
-    # --- Footer ---
-    st.markdown("---")
-    # Centering the footer
-    st.markdown(
-        "<div style='text-align: center;'>"\
-        "SSO Consultants © 2025 | All Rights Reserved."\
-        "</div>",
-        unsafe_allow_html=True
-    )
+# --- Footer ---
+st.markdown("---")
+# Centering the footer
+st.markdown(
+    "<div style='text-align: center;'>"\
+    "SSO Consultants © 2025 | All Rights Reserved."\
+    "</div>",
+    unsafe_allow_html=True
+)
 
-    # --- In-App Debug Logs ---
-    st.expander_debug = st.expander("Show Debug Logs")
-    with st.expander_debug:
-        if st.button("Clear Debug Logs", key="clear_debug_logs_button"):
-            st.session_state['debug_logs'] = []
-            st.rerun()
-        for log_entry in st.session_state['debug_logs']:
-            st.code(log_entry, language='text')
-
-# --- Run the App ---
-if not st.session_state['logged_in']:
-    check_password()
+# --- In-App Debug Logs ---
+st.expander_debug = st.expander("Show Debug Logs")
+with st.expander_debug:
+    if st.button("Clear Debug Logs", key="clear_debug_logs_button"):
+        st.session_state['debug_logs'] = []
+        st.rerun()
+    for log_entry in st.session_state['debug_logs']:
+        st.code(log_entry, language='text')
