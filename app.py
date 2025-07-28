@@ -16,6 +16,9 @@ import seaborn as sns
 import re # For parsing graph requests and markdown bolding
 from scipy import stats # For statistical tests
 import numpy as np # For numerical operations, especially for ANOVA SS calculations
+import pingouin as pg # NEW: For Cronbach's Alpha
+import statsmodels.api as sm # NEW: For Linear Regression
+import statsmodels.formula.api as smf # NEW: For Linear Regression with formula API
 
 # --- Configuration and Secrets ---
 # IMPORTANT: Create a .streamlit/secrets.toml file in your project root
@@ -67,6 +70,13 @@ if 'openai_client' not in st.session_state: # New: Store OpenAI client instance 
     st.session_state['openai_client'] = None
 if 'debug_logs' not in st.session_state: # New: For in-app debug logs
     st.session_state['debug_logs'] = []
+if 'regression_results' not in st.session_state: # NEW: To store regression summary
+    st.session_state['regression_results'] = None
+if 'regression_plot_buffer' not in st.session_state: # NEW: To store regression plot buffer
+    st.session_state['regression_plot_buffer'] = None
+if 'regression_plot_caption' not in st.session_state: # NEW: To store regression plot caption
+    st.session_state['regression_plot_caption'] = None
+
 
 # --- Helper Functions ---
 
@@ -464,6 +474,9 @@ def create_report_doc(report_data, logo_path="SsoLogo.jpg"):
                         # Format floats to 4 decimal places
                         table.cell(r_idx, c_idx).text = str(f"{cell_value:.4f}" if isinstance(cell_value, (float)) else cell_value)
             
+        elif item_type == "regression_summary": # NEW: For regression summary text
+            document.add_paragraph(content)
+
         document.add_paragraph("\n") # Add a blank line after each section for spacing
 
     # Add a section for the footer in the report
@@ -554,19 +567,118 @@ def generate_and_display_graph(df, graph_type, columns):
         return None, f"An error occurred while generating the graph: {e}. Please check your column selections and data."
 
 
-def perform_statistical_test(df, test_type, col1, col2=None):
+def perform_statistical_test(df, test_type, col1=None, col2=None):
     """
-    Performs the selected statistical test and returns the results as a formatted string
-    and optionally a pandas DataFrame(s) for structured output.
-    Returns (results_str, structured_results_for_ui, error_message).
-    structured_results_for_ui will be None if not applicable or on error, or a DataFrame/tuple of DataFrames.
+    Performs the selected statistical test and returns the results as a formatted string,
+    structured DataFrame(s), an error message, and optionally a plot buffer and caption.
+    
+    Returns (results_str, structured_results_for_ui, error_message, plot_buffer, plot_caption).
+    structured_results_for_ui can be a DataFrame, tuple of DataFrames, or None.
+    plot_buffer and plot_caption are for tests that generate plots (e.g., future tests).
     """
     results_str = ""
-    structured_results_for_ui = None # New: To hold structured results for UI display (e.g., tuple of DFs)
+    structured_results_for_ui = None
     error_message = None
+    plot_buffer = None
+    plot_caption = None
 
     try:
-        if test_type == "anova":
+        # NEW: Cronbach's Alpha Test
+        if test_type == "Cronbach’s Alpha (Reliability)":
+            # For Cronbach's Alpha, col1 is expected to be a list of column names (items)
+            if not (isinstance(col1, list) and len(col1) >= 2):
+                error_message = "Cronbach’s Alpha: Please select at least two numerical columns (items) for the test."
+            else:
+                selected_columns = col1
+                numeric_cols_data = df[selected_columns].dropna()
+
+                for col in selected_columns:
+                    if not pd.api.types.is_numeric_dtype(df[col]):
+                        error_message = f"Cronbach’s Alpha: All selected columns must be numerical. '{col}' is not."
+                        break # Exit loop if non-numerical column found
+
+                if not error_message and (numeric_cols_data.empty or len(numeric_cols_data) < 2):
+                    error_message = "Cronbach’s Alpha: Not enough valid data points after dropping NaNs (requires at least 2 rows)."
+                
+                if not error_message:
+                    alpha, n_items = pg.cronbach_alpha(data=numeric_cols_data, return_N=True)
+
+                    results_df = pd.DataFrame({
+                        "Metric": ["Alpha Value", "Number of Items"],
+                        "Value": [alpha, n_items]
+                    })
+                    
+                    results_str = (
+                        f"Cronbach’s Alpha (Reliability) Test Results:\n"
+                        f"  Alpha Value: {alpha:.4f}\n"
+                        f"  Number of Items: {n_items}\n"
+                        "Interpretation will be provided by the AI."
+                    )
+                    structured_results_for_ui = results_df
+        
+        # NEW: Z-Test (Two Sample Means)
+        elif test_type == "Z-Test (Two Sample Means)":
+            append_debug_log(f"DEBUG Z-Test: col1={col1}, col2={col2}")
+            if not pd.api.types.is_numeric_dtype(df[col1]):
+                error_message = f"Z-Test: Numerical variable '{col1}' must be numerical."
+            elif not (pd.api.types.is_object_dtype(df[col2]) or pd.api.types.is_string_dtype(df[col2]) or pd.api.types.is_categorical_dtype(df[col2])):
+                error_message = f"Z-Test: Grouping variable '{col2}' must be categorical."
+            else:
+                unique_groups = df[col2].dropna().unique()
+                if len(unique_groups) != 2:
+                    error_message = f"Z-Test: Grouping variable '{col2}' must have exactly 2 distinct groups. Found {len(unique_groups)}."
+                else:
+                    group1_name, group2_name = unique_groups[0], unique_groups[1]
+                    group1_data = df[col1][df[col2] == group1_name].dropna()
+                    group2_data = df[col1][df[col2] == group2_name].dropna()
+
+                    if len(group1_data) < 30 or len(group2_data) < 30: # Z-test assumes large sample sizes (n >= 30) or known population std dev
+                        st.warning("Warning: Z-Test is typically used for large sample sizes (n >= 30) or when population standard deviation is known. Consider a T-Test if sample sizes are small and population standard deviations are unknown.")
+                        # This is a warning, not an error that stops the test. The user still wants to run it.
+
+                    # Calculate sample statistics
+                    n1, mean1, std1 = len(group1_data), group1_data.mean(), group1_data.std()
+                    n2, mean2, std2 = len(group2_data), group2_data.mean(), group2_data.std()
+
+                    if std1 == 0 and std2 == 0:
+                        error_message = "Z-Test: Both groups have zero variance, cannot perform test."
+                    elif n1 == 0 or n2 == 0:
+                        error_message = f"Z-Test: One or both groups have no data for '{col1}' after dropping NaNs."
+                    else:
+                        # Calculate pooled standard deviation if assuming equal variance (similar to T-test, but for Z-test context)
+                        # For a standard Z-test with unknown population SD, we use sample SD (large n assumption)
+                        # Standard Error of the Difference
+                        se_diff = np.sqrt((std1**2 / n1) + (std2**2 / n2))
+
+                        if se_diff == 0:
+                             error_message = "Z-Test: Standard error of the difference is zero. Cannot perform test."
+                        else:
+                            z_statistic = (mean1 - mean2) / se_diff
+                            p_value = 2 * (1 - stats.norm.cdf(abs(z_statistic))) # Two-tailed p-value
+
+                            group_stats_data = {
+                                'Group': [group1_name, group2_name],
+                                'N': [n1, n2],
+                                'Mean': [mean1, mean2],
+                                'Std. Deviation': [std1, std2]
+                            }
+                            group_stats_df = pd.DataFrame(group_stats_data)
+
+                            test_results_data = {
+                                'Statistic': ['Z-statistic', 'P-value'],
+                                'Value': [z_statistic, p_value]
+                            }
+                            test_results_df = pd.DataFrame(test_results_data)
+
+                            results_str = (
+                                f"Z-Test (Two Sample Means) Results for '{col1}' by '{col2}' ({group1_name} vs {group2_name}):\n"
+                                f"  Z-statistic: {z_statistic:.4f}\n"
+                                f"  P-value: {p_value:.4f}\n"
+                                "Interpretation will be provided by the AI."
+                            )
+                            structured_results_for_ui = (group_stats_df, test_results_df)
+
+        elif test_type == "anova":
             append_debug_log(f"DEBUG ANOVA: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(df[{col1}])={pd.api.types.is_numeric_dtype(df[col1])}")
             append_debug_log(f"DEBUG ANOVA: is_categorical_dtype(df[{col2}])={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(df[{col2}])={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(df[{col2}])={pd.api.types.is_string_dtype(df[col2])}")
@@ -942,7 +1054,60 @@ def perform_statistical_test(df, test_type, col1, col2=None):
         st.exception(e) # Display traceback in UI for debugging
         append_debug_log(f"DEBUG: Exception in perform_statistical_test: {e}") # Debug print
 
-    return results_str, structured_results_for_ui, error_message
+    return results_str, structured_results_for_ui, error_message, plot_buffer, plot_caption # Return plot_buffer and plot_caption (will be None for most stat tests)
+
+
+def perform_linear_regression(df, dependent_var, independent_var):
+    """
+    Performs simple linear regression and returns summary, plot buffer, and caption.
+    Returns (summary_text, plot_buffer, plot_caption, error_message)
+    """
+    summary_text = None
+    plot_buffer = io.BytesIO()
+    plot_caption = None
+    error_message = None
+
+    if not pd.api.types.is_numeric_dtype(df[dependent_var]):
+        error_message = f"Dependent variable '{dependent_var}' must be numerical."
+    elif not pd.api.types.is_numeric_dtype(df[independent_var]):
+        error_message = f"Independent variable '{independent_var}' must be numerical."
+    else:
+        try:
+            # Drop NaNs for the selected columns
+            temp_df = df[[dependent_var, independent_var]].dropna()
+            
+            if len(temp_df) < 2:
+                error_message = "Not enough valid data points for regression after dropping NaNs (requires at least 2)."
+            else:
+                # Add a constant to the independent variable for statsmodels
+                X = sm.add_constant(temp_df[independent_var])
+                y = temp_df[dependent_var]
+
+                # Create and fit the OLS model
+                model = sm.OLS(y, X)
+                results = model.fit()
+
+                summary_text = results.summary().as_text() # Get the full text summary
+
+                # Generate the regression plot
+                plt.figure(figsize=(10, 6))
+                sns.regplot(x=temp_df[independent_var], y=temp_df[dependent_var], scatter_kws={'alpha':0.3})
+                plt.title(f'Regression Plot: {dependent_var} vs {independent_var}')
+                plt.xlabel(independent_var)
+                plt.ylabel(dependent_var)
+                plot_caption = f"Simple Linear Regression Plot of '{dependent_var}' against '{independent_var}'."
+                
+                plt.savefig(plot_buffer, format='png', bbox_inches='tight')
+                plot_buffer.seek(0)
+                plt.close()
+
+        except Exception as e:
+            plt.close() # Ensure plot is closed even on error
+            error_message = f"An error occurred during linear regression: {e}. Please check your column selections and data."
+            st.exception(e)
+
+    return summary_text, plot_buffer, plot_caption, error_message
+
 
 # --- Main Application Logic ---
 def main_app():
@@ -956,7 +1121,8 @@ def main_app():
                 keys_to_clear = [
                     'logged_in', 'current_username', 'df', 'data_summary_text', 'data_summary_table',
                     'messages', 'report_content', 'user_goal', 'uploaded_file_name',
-                    'openai_client_initialized', 'openai_client', 'debug_logs'
+                    'openai_client_initialized', 'openai_client', 'debug_logs',
+                    'regression_results', 'regression_plot_buffer', 'regression_plot_caption'
                 ]
                 for key in keys_to_clear:
                     if key in st.session_state:
@@ -987,6 +1153,10 @@ def main_app():
             st.session_state['user_goal'] = "Not specified" # Reset user goal
             st.session_state['uploaded_file_name'] = uploaded_file.name # Store file name to detect new upload
             st.session_state['debug_logs'] = [] # Clear debug logs for new file
+            st.session_state['regression_results'] = None # Reset regression results
+            st.session_state['regression_plot_buffer'] = None # Reset regression plot
+            st.session_state['regression_plot_caption'] = None # Reset regression plot caption
+
 
             try:
                 if uploaded_file.name.endswith('.csv'):
@@ -1068,6 +1238,9 @@ def main_app():
                 elif message["role"] == "dataframe": # Handle dataframe messages
                     st.subheader(message.get("title", "Statistical Table")) # Display title for the table
                     st.dataframe(message["content"])
+                elif message["role"] == "code": # Handle regression summary (plain text, but styled as code for readability)
+                    st.subheader(message.get("title", "Regression Summary"))
+                    st.code(message["content"], language='text')
                 else:
                     st.markdown(message["content"])
 
@@ -1144,24 +1317,33 @@ def main_app():
         # UPDATED: Added all new statistical test options
         test_options = [
             "Select a test", 
+            "Cronbach’s Alpha (Reliability)", # NEW
+            "Z-Test (Two Sample Means)", # NEW
             "ANOVA", 
             "Independent T-test", # Assumes Equal Variances
             "Paired T-test", 
             "Chi-squared Test", 
             "Pearson Correlation", 
             "Spearman Rank Correlation",
-            "F-Test Two-Sample for Variances", # New
-            "T-test: Two-Sample Assuming Unequal Variances", # New
-            "Shapiro-Wilk Test (Normality)" # New
+            "F-Test Two-Sample for Variances", 
+            "T-test: Two-Sample Assuming Unequal Variances", 
+            "Shapiro-Wilk Test (Normality)" 
         ]
         selected_test = st.sidebar.selectbox("Choose Statistical Test:", test_options, key="stat_test_select")
 
         stat_col1 = None
         stat_col2 = None
-        stat_col_single = None # For single-column tests like Shapiro-Wilk
+        stat_cols_multiselect = None # For Cronbach's Alpha
 
         # Dynamic column selection based on selected test
-        if selected_test == "ANOVA":
+        if selected_test == "Cronbach’s Alpha (Reliability)": # NEW
+            st.sidebar.info("Cronbach’s Alpha: Measures internal consistency of multiple numerical items (e.g., survey questions).")
+            stat_cols_multiselect = st.sidebar.multiselect("Select Numerical Items (2+ columns):", numerical_columns, key="cronbach_cols")
+        elif selected_test == "Z-Test (Two Sample Means)": # NEW
+            st.sidebar.info("Z-Test: Compares means of a numerical variable between 2 independent groups (large sample or known population SD).")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="ztest_num_col")
+            stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ztest_cat_col")
+        elif selected_test == "ANOVA":
             st.sidebar.info("ANOVA: Compares means of a numerical variable across 2+ categories.")
             stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + numerical_columns, key="anova_num_col")
             stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + categorical_columns, key="anova_cat_col")
@@ -1195,45 +1377,47 @@ def main_app():
             stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ttest_uneq_cat_col")
         elif selected_test == "Shapiro-Wilk Test (Normality)":
             st.sidebar.info("Shapiro-Wilk Test: Tests if a numerical variable is normally distributed.")
-            stat_col_single = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="shapiro_num_col")
+            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="shapiro_num_col") # Renamed from stat_col_single to stat_col1 for consistency
         
         if st.sidebar.button(f"Run {selected_test}"):
             append_debug_log(f"DEBUG: Button '{selected_test}' clicked.")
-            append_debug_log(f"DEBUG: selected_test='{selected_test}', stat_col1='{stat_col1}', stat_col2='{stat_col2}', stat_col_single='{stat_col_single}'")
+            append_debug_log(f"DEBUG: selected_test='{selected_test}', stat_col1='{stat_col1}', stat_col2='{stat_col2}', stat_cols_multiselect='{stat_cols_multiselect}'")
 
             # Validate column selections based on test type
             is_valid_selection = True
             if selected_test == "Select a test":
                 st.sidebar.warning("Please select a statistical test to run.")
                 is_valid_selection = False
+            elif selected_test == "Cronbach’s Alpha (Reliability)": # NEW validation for multi-select
+                if not stat_cols_multiselect or len(stat_cols_multiselect) < 2:
+                    st.sidebar.warning("Please select at least two numerical columns for Cronbach’s Alpha.")
+                    is_valid_selection = False
+                else: # Pass the list of columns as col1
+                    stat_col1 = stat_cols_multiselect
+                    stat_col2 = None # Ensure col2 is None for this test
             elif selected_test == "Shapiro-Wilk Test (Normality)":
-                if stat_col_single == "Select column":
+                if stat_col1 == "Select column":
                     st.sidebar.warning("Please select a numerical variable for the Shapiro-Wilk Test.")
                     is_valid_selection = False
-            elif stat_col1 == "Select column" or stat_col2 == "Select column":
-                st.sidebar.warning("Please select all required columns for the chosen test.")
-                is_valid_selection = False
+            elif selected_test in ["ANOVA", "Independent T-test", "Paired T-test", "Chi-squared Test",
+                                   "Pearson Correlation", "Spearman Rank Correlation",
+                                   "F-Test Two-Sample for Variances", "T-test: Two-Sample Assuming Unequal Variances"]:
+                if stat_col1 == "Select column" or stat_col2 == "Select column":
+                    st.sidebar.warning("Please select all required columns for the chosen test.")
+                    is_valid_selection = False
             
             if is_valid_selection:
-                append_debug_log(f"DEBUG: Calling perform_statistical_test for {selected_test} with {stat_col1}, {stat_col2 if selected_test != 'Shapiro-Wilk Test (Normality)' else stat_col_single}")
+                append_debug_log(f"DEBUG: Calling perform_statistical_test for {selected_test} with col1={stat_col1}, col2={stat_col2}")
                 with st.spinner(f"Running {selected_test}..."):
-                    # Convert selected_test to the internal snake_case string used in perform_statistical_test
-                    internal_test_type = selected_test.lower().replace(" ", "_").replace("-", "_").replace("(", "").replace(")", "")
+                    # Convert selected_test to the internal string used in perform_statistical_test
+                    internal_test_type = selected_test.replace(" ", "_").replace("(", "").replace(")", "").lower().replace("’", "")
                     
-                    # Pass appropriate columns based on test type
-                    if selected_test == "Shapiro-Wilk Test (Normality)":
-                        test_results_str, structured_results_for_ui, test_error = perform_statistical_test(
-                            st.session_state['df'], 
-                            internal_test_type, 
-                            stat_col_single # Only one column for Shapiro-Wilk
-                        )
-                    else:
-                        test_results_str, structured_results_for_ui, test_error = perform_statistical_test(
-                            st.session_state['df'], 
-                            internal_test_type, 
-                            stat_col1, 
-                            stat_col2
-                        )
+                    test_results_str, structured_results_for_ui, test_error, plot_buffer_stat, plot_caption_stat = perform_statistical_test(
+                        st.session_state['df'], 
+                        internal_test_type, 
+                        stat_col1, # This will be list of columns for Cronbach's, single for others
+                        stat_col2
+                    )
 
                     if test_error:
                         st.session_state.messages.append({"role": "assistant", "content": test_error})
@@ -1244,8 +1428,8 @@ def main_app():
                         st.session_state.report_content.append({"type": "heading", "level": 2, "content": f"Statistical Test: {selected_test}"})
                         st.session_state.report_content.append({"type": "text", "content": test_results_str})
 
-                        # NEW: Display structured results in UI and add to report based on test type
-                        if selected_test in ["Independent T-test", "Paired T-test", "T-test: Two-Sample Assuming Unequal Variances"] and structured_results_for_ui is not None:
+                        # Display structured results in UI and add to report based on test type
+                        if selected_test in ["Independent T-test", "Paired T-test", "Z-Test (Two Sample Means)", "T-test: Two-Sample Assuming Unequal Variances"] and structured_results_for_ui is not None:
                             group_stats_df, test_stats_df = structured_results_for_ui # Unpack the tuple
                             
                             st.session_state.messages.append({"role": "dataframe", "title": "Group Statistics", "content": group_stats_df})
@@ -1259,12 +1443,13 @@ def main_app():
                             st.session_state.messages.append({"role": "dataframe", "title": "ANOVA Summary Table", "content": anova_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": "ANOVA Summary Table", "dataframe": anova_df})
 
-                        elif selected_test in ["Pearson Correlation", "Spearman Rank Correlation", "F-Test Two-Sample for Variances", "Shapiro-Wilk Test (Normality)"] and structured_results_for_ui is not None:
+                        elif selected_test in ["Pearson Correlation", "Spearman Rank Correlation", "F-Test Two-Sample for Variances", 
+                                               "Shapiro-Wilk Test (Normality)", "Cronbach’s Alpha (Reliability)"] and structured_results_for_ui is not None: # UPDATED for Cronbach's
                             # These tests return a single DataFrame
                             single_table_df = structured_results_for_ui
                             table_title = f"{selected_test} Results"
                             if selected_test == "Shapiro-Wilk Test (Normality)":
-                                table_title = f"Shapiro-Wilk Test Results for {stat_col_single}"
+                                table_title = f"Shapiro-Wilk Test Results for {stat_col1}"
                             
                             st.session_state.messages.append({"role": "dataframe", "title": table_title, "content": single_table_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": table_title, "dataframe": single_table_df})
@@ -1289,6 +1474,11 @@ def main_app():
                             st.session_state.messages.append({"role": "assistant", "content": chi2_summary_text})
                             st.session_state.report_content.append({"type": "text", "content": chi2_summary_text})
 
+                        # Add plot if the test generated one (currently only for regression, but structure is here)
+                        if plot_buffer_stat and plot_caption_stat:
+                            st.session_state.messages.append({"role": "graph", "content": plot_buffer_stat, "caption": plot_caption_stat})
+                            st.session_state.report_content.append({"type": "image", "content": plot_buffer_stat, "caption": plot_caption_stat})
+
 
                         # Get AI interpretation of the test results
                         interpretation_prompt = (
@@ -1301,6 +1491,56 @@ def main_app():
                         append_debug_log(f"DEBUG: Stat test interpretation prompt:\n{interpretation_prompt}\n---") # Debug print
                         ai_interpretation = generate_openai_response(interpretation_prompt)
                         append_debug_log(f"DEBUG: Stat test interpretation response:\n{ai_interpretation}\n---") # Debug print
+                        st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
+                        st.session_state.report_content.append({"type": "text", "content": ai_interpretation})
+                st.rerun()
+
+        # --- NEW: Regression Analysis Section ---
+        st.sidebar.markdown("---")
+        st.sidebar.header("Regression Analysis")
+
+        regression_dep_var = st.sidebar.selectbox("Dependent Variable (Y):", ["Select column"] + numerical_columns, key="reg_dep_var")
+        regression_indep_var = st.sidebar.selectbox("Independent Variable (X):", ["Select column"] + numerical_columns, key="reg_indep_var")
+
+        if st.sidebar.button("Run Simple Linear Regression"):
+            if regression_dep_var == "Select column" or regression_indep_var == "Select column":
+                st.sidebar.warning("Please select both dependent and independent variables for regression.")
+            else:
+                with st.spinner("Running Simple Linear Regression..."):
+                    reg_summary, reg_plot_buffer, reg_plot_caption, reg_error = perform_linear_regression(
+                        st.session_state['df'], 
+                        regression_dep_var, 
+                        regression_indep_var
+                    )
+                    
+                    if reg_error:
+                        st.session_state.messages.append({"role": "assistant", "content": reg_error})
+                        st.session_state.report_content.append({"type": "text", "content": f"Regression Error: {reg_error}"})
+                    else:
+                        st.session_state['regression_results'] = reg_summary # Store for display and report
+                        st.session_state['regression_plot_buffer'] = reg_plot_buffer
+                        st.session_state['regression_plot_caption'] = reg_plot_caption
+
+                        # Display regression plot in chat
+                        st.session_state.messages.append({"role": "graph", "content": reg_plot_buffer, "caption": reg_plot_caption})
+                        st.session_state.report_content.append({"type": "heading", "level": 2, "content": "Simple Linear Regression"})
+                        st.session_state.report_content.append({"type": "image", "content": reg_plot_buffer, "caption": reg_plot_caption})
+
+                        # Display regression summary in chat (as code block for formatting)
+                        st.session_state.messages.append({"role": "code", "title": "Regression Model Summary", "content": reg_summary})
+                        st.session_state.report_content.append({"type": "regression_summary", "content": reg_summary})
+
+                        # Get AI interpretation of regression results
+                        interpretation_prompt = (
+                            f"A simple linear regression was performed with dependent variable '{regression_dep_var}' and independent variable '{regression_indep_var}'. "
+                            f"Here is the model summary:\n{reg_summary}\n\n"
+                            "Please provide a concise, plain-language interpretation of these regression results, "
+                            "focusing on the relationship between the variables, the significance of the model, and the R-squared value. "
+                            "Do NOT provide code or markdown formatting."
+                        )
+                        append_debug_log(f"DEBUG: Regression interpretation prompt:\n{interpretation_prompt}\n---")
+                        ai_interpretation = generate_openai_response(interpretation_prompt)
+                        append_debug_log(f"DEBUG: Regression interpretation response:\n{ai_interpretation}\n---")
                         st.session_state.messages.append({"role": "assistant", "content": ai_interpretation})
                         st.session_state.report_content.append({"type": "text", "content": ai_interpretation})
                 st.rerun()
@@ -1343,6 +1583,10 @@ def main_app():
         st.session_state['report_content'] = []
         st.session_state['user_goal'] = "Not specified"
         st.session_state['debug_logs'] = [] # Clear debug logs on chat reset
+        st.session_state['regression_results'] = None # Reset regression results
+        st.session_state['regression_plot_buffer'] = None # Reset regression plot
+        st.session_state['regression_plot_caption'] = None # Reset regression plot caption
+
         # If a file is uploaded, re-trigger initial analysis
         if st.session_state['df'] is not None:
             summary_text, summary_table = get_data_summary(st.session_state['df'])
@@ -1400,7 +1644,7 @@ def main_app():
     # --- In-App Debug Logs ---
     st.expander_debug = st.expander("Show Debug Logs")
     with st.expander_debug:
-        if st.button("Clear Debug Logs", key="clear_debug_logs_button"):
+        if st.button("Clear Debug Logs", key="clear_debug_logs_button"):\
             st.session_state['debug_logs'] = []
             st.rerun()
         for log_entry in st.session_state['debug_logs']:
