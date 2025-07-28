@@ -1401,7 +1401,7 @@ def main_app():
                     is_valid_selection = False
             elif selected_test in ["ANOVA", "Independent T-test", "Paired T-test", "Chi-squared Test",
                                    "Pearson Correlation", "Spearman Rank Correlation",
-                                   "F-Test Two-Sample for Variances", "T-test: Two-Sample Assuming Unequal Variances"]:
+                                   "F-Test Two-Sample for Variances", "T-test: Two-Sample Assuming Unequal Variances", "Z-Test (Two Sample Means)"]: # Added Z-Test here
                 if stat_col1 == "Select column" or stat_col2 == "Select column":
                     st.sidebar.warning("Please select all required columns for the chosen test.")
                     is_valid_selection = False
@@ -1644,7 +1644,7 @@ def main_app():
     # --- In-App Debug Logs ---
     st.expander_debug = st.expander("Show Debug Logs")
     with st.expander_debug:
-        if st.button("Clear Debug Logs", key="clear_debug_logs_button"):\
+        if st.button("Clear Debug Logs", key="clear_debug_logs_button"): # Removed backslash
             st.session_state['debug_logs'] = []
             st.rerun()
         for log_entry in st.session_state['debug_logs']:
