@@ -678,7 +678,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                             )
                             structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "anova":
+        elif test_type == "ANOVA": # Updated to match dropdown string
             append_debug_log(f"DEBUG ANOVA: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(df[{col1}])={pd.api.types.is_numeric_dtype(df[col1])}")
             append_debug_log(f"DEBUG ANOVA: is_categorical_dtype(df[{col2}])={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(df[{col2}])={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(df[{col2}])={pd.api.types.is_string_dtype(df[col2])}")
@@ -745,7 +745,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = anova_df # Return the single DataFrame
 
-        elif test_type == "independent_t_test":
+        elif test_type == "Independent T-test": # Updated to match dropdown string
             append_debug_log(f"DEBUG Independent T-test: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Independent T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
@@ -792,7 +792,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                         # Store both dataframes in a tuple for structured_results_for_ui
                         structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "chi_squared_test":
+        elif test_type == "Chi-squared Test": # Updated to match dropdown string
             append_debug_log(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Chi-squared: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not (pd.api.types.is_object_dtype(df[col1]) or pd.api.types.is_string_dtype(df[col1]) or pd.api.types.is_categorical_dtype(df[col1])):
@@ -820,7 +820,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = (observed_df, expected_df, chi2, p_value, dof) # Return tuple of DFs and key stats
 
-        elif test_type == "paired_t_test":
+        elif test_type == "Paired T-test": # Updated to match dropdown string
             append_debug_log(f"DEBUG Paired T-test: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Paired T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
@@ -864,7 +864,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "pearson_correlation (Validity-Linear)":
+        elif test_type == "Pearson Correlation": # Updated to match dropdown string
             append_debug_log(f"DEBUG Pearson Correlation: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Pearson Correlation: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
@@ -895,7 +895,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = corr_results_df
 
-        elif test_type == "spearman_rank_correlation":
+        elif test_type == "Spearman Rank Correlation": # Updated to match dropdown string
             append_debug_log(f"DEBUG Spearman Correlation: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Spearman Correlation: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]): # Spearman can also use ordinal, but for simplicity, we'll stick to numerical selection
@@ -924,7 +924,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = spearman_results_df
 
-        elif test_type == "f_test_two_sample_for_variances":
+        elif test_type == "F-Test Two-Sample for Variances": # Updated to match dropdown string
             append_debug_log(f"DEBUG F-Test for Variances: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG F-Test for Variances: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
@@ -974,7 +974,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = f_test_df
 
-        elif test_type == "t_test_two_sample_assuming_unequal_variances":
+        elif test_type == "T-test: Two-Sample Assuming Unequal Variances": # Updated to match dropdown string
             append_debug_log(f"DEBUG Unequal Variances T-test: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Unequal Variances T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
@@ -1020,7 +1020,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                         )
                         structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "shapiro_wilk_test_normality": # FIXED: Corrected name to match selected_test conversion
+        elif test_type == "Shapiro-Wilk Test (Normality)": # Updated to match dropdown string
             append_debug_log(f"DEBUG Shapiro-Wilk Test: col1={col1}") # col1 here is actually stat_col_single
             append_debug_log(f"DEBUG Shapiro-Wilk Test: df[{col1}].dtype={df[col1].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
@@ -1323,8 +1323,8 @@ def main_app():
             "Independent T-test", # Assumes Equal Variances
             "Paired T-test", 
             "Chi-squared Test", 
-            "Pearson Correlation(Validity-Linear)", 
-            "Spearman Rank Correlation(Validity – Monotonic)",
+            "Pearson Correlation", 
+            "Spearman Rank Correlation",
             "F-Test Two-Sample for Variances", 
             "T-test: Two-Sample Assuming Unequal Variances", 
             "Shapiro-Wilk Test (Normality)" 
@@ -1409,13 +1409,11 @@ def main_app():
             if is_valid_selection:
                 append_debug_log(f"DEBUG: Calling perform_statistical_test for {selected_test} with col1={stat_col1}, col2={stat_col2}")
                 with st.spinner(f"Running {selected_test}..."):
-                    # Convert selected_test to the internal string used in perform_statistical_test
-                    internal_test_type = selected_test.replace(" ", "_").replace("(", "").replace(")", "").lower().replace("’", "")
-                    
+                    # Pass selected_test directly to the function
                     test_results_str, structured_results_for_ui, test_error, plot_buffer_stat, plot_caption_stat = perform_statistical_test(
                         st.session_state['df'], 
-                        internal_test_type, 
-                        stat_col1, # This will be list of columns for Cronbach's, single for others
+                        selected_test, # Pass selected_test directly, without modification
+                        stat_col1, 
                         stat_col2
                     )
 
@@ -1644,7 +1642,7 @@ def main_app():
     # --- In-App Debug Logs ---
     st.expander_debug = st.expander("Show Debug Logs")
     with st.expander_debug:
-        if st.button("Clear Debug Logs", key="clear_debug_logs_button"): # Removed backslash
+        if st.button("Clear Debug Logs", key="clear_debug_logs_button"):
             st.session_state['debug_logs'] = []
             st.rerun()
         for log_entry in st.session_state['debug_logs']:
