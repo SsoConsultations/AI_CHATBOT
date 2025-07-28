@@ -602,7 +602,10 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                 
                 if not error_message:
                     # Removed return_N as it might not be supported by all pingouin versions
-                    alpha = pg.cronbach_alpha(data=numeric_cols_data)
+                    alpha_series = pg.cronbach_alpha(data=numeric_cols_data)
+                    # Safely extract the scalar alpha value from the Series
+                    alpha = alpha_series.loc['Alpha'] if 'Alpha' in alpha_series.index else float(alpha_series) # Fallback to float cast if not a Series
+
                     n_items = len(selected_columns) # Get number of items from selected columns directly
 
                     results_df = pd.DataFrame({
@@ -815,9 +818,9 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
 
                     results_str = (
                         f"Chi-squared Test Results for '{col1}' and '{col2}':\n"
-                        f"  Chi-squared statistic: {chi2:.4f}\n"
-                        f"  P-value: {p_value:.4f}\n"
-                        f"  Degrees of Freedom (dof): {dof}\n"
+                        f"  Chi-squared statistic: {float(chi2):.4f}\n" # Explicitly cast to float
+                        f"  P-value: {float(p_value):.4f}\n"             # Explicitly cast to float
+                        f"  Degrees of Freedom (dof): {int(dof)}\n"      # Explicitly cast to int
                         "Interpretation will be provided by the AI."
                     )
                     structured_results_for_ui = (observed_df, expected_df, chi2, p_value, dof) # Return tuple of DFs and key stats
@@ -957,7 +960,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     elif f_statistic == 0.0: # Check for 0.0 explicitly
                         p_value = 1.0 # Very large p-value
                     else:
-                        # For two-tailed test, p-value is 2 * min(cdf(F), 1 - cdf(F))
+                        # For two-tailed test, p-value is 2 * min(stats.f.cdf(F), 1 - stats.f.cdf(F))
                         # The degrees of freedom order depends on which variance is in the numerator
                         p_value = 2 * min(stats.f.cdf(f_statistic, df1, df2), 1 - stats.f.cdf(f_statistic, df1, df2))
 
@@ -1466,9 +1469,9 @@ def main_app():
                             # Add summary text for Chi-squared after tables
                             chi2_summary_text = (
                                 f"Chi-squared Test Statistics:\n"
-                                f"  Chi-squared statistic: {chi2_val:.4f}\n"
-                                f"  P-value: {p_val:.4f}\n"
-                                f"  Degrees of Freedom (dof): {dof_val}\n"
+                                f"  Chi-squared statistic: {float(chi2_val):.4f}\n" # Explicitly cast to float
+                                f"  P-value: {float(p_val):.4f}\n"             # Explicitly cast to float
+                                f"  Degrees of Freedom (dof): {int(dof_val)}\n"      # Explicitly cast to int
                                 "Interpretation will be provided by the AI."
                             )
                             st.session_state.messages.append({"role": "assistant", "content": chi2_summary_text})
@@ -1556,7 +1559,7 @@ def main_app():
             if "my goal is" in prompt_lower or "i want to do" in prompt_lower or "my objective is" in prompt_lower:
                 st.session_state['user_goal'] = prompt # Simple capture for now
                 st.session_state.report_content.append({"type": "heading", "level": 2, "content": "User's Stated Goal"})
-                st.session_state.report_content.append({"type": "text", "content": prompt})
+                st.session_state.report.content.append({"type": "text", "content": prompt})
 
             # Construct prompt for OpenAI, including data summary and full chat history
             full_prompt = (
@@ -1571,7 +1574,7 @@ def main_app():
             with st.spinner("Generating response..."):
                 response = generate_openai_response(full_prompt)
                 st.session_state.messages.append({"role": "assistant", "content": response})
-                st.session_state.report_content.append({"type": "text", "content": response}) # Log AI responses for report
+                st.session_state.report.content.append({"type": "text", "content": response}) # Log AI responses for report
             st.rerun() # Rerun to display the new message/graph
 
     st.sidebar.markdown("---")
