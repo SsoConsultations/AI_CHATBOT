@@ -280,7 +280,7 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
             ai_response_content = response.choices[0].message.content
             append_debug_log(f"DEBUG: Raw OpenAI response received:\n{ai_response_content}\n---") # Debug print
             return ai_response_content
-        except AuthenticationError as e:
+        except AuthenticationError:
             append_debug_log(f"DEBUG: API Call AuthenticationError: {e}") # Debug print
             st.error("OpenAI API Key is invalid during chat. Please check your .streamlit/secrets.toml file.")
             return "I'm sorry, my connection to the AI failed due to an invalid API key. Please contact support."
@@ -288,15 +288,15 @@ def generate_openai_response(prompt, model="gpt-3.5-turbo"):
             append_debug_log(f"DEBUG: API Call ConnectionError: {e}") # Debug print
             st.error(f"Could not connect to OpenAI API during chat: {e}. Please check your internet connection and firewall settings.")
             return "I'm sorry, I'm having trouble connecting to the AI. Please check your internet connection and try again."
-        except RateLimitError as e:
+        except RateLimitError:
             append_debug_log(f"DEBUG: API Call RateLimitError: {e}") # Debug print
             st.error("OpenAI API rate limit exceeded during chat. Please try again in a moment.")
             return "I'm sorry, the AI is experiencing high demand. Please try again in a moment."
-        except requests.exceptions.Timeout as e: # Catch specific requests timeout
+        except requests.exceptions.Timeout:
             append_debug_log(f"DEBUG: API Call Timeout: {e}") # Debug print
             st.error("OpenAI API request timed out. The server took too long to respond. Please try again.")
             return "I'm sorry, the AI took too long to respond. Please try again in a moment."
-        except APIStatusError as e: # Catch API specific status errors (e.g., 4xx, 5xx from OpenAI)
+        except APIStatusError as e: # Catch API specific status errors
             append_debug_log(f"DEBUG: API Call Status Error: {e.status_code} - {e.response}") # Debug print
             st.error(f"OpenAI API returned an error status: {e.status_code}. Please try again later.")
             return f"I'm sorry, the AI encountered an error ({e.status_code}). Please try again later."
@@ -573,7 +573,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
     structured DataFrame(s), an error message, and optionally a plot buffer and caption.
     
     Returns (results_str, structured_results_for_ui, error_message, plot_buffer, plot_caption).
-    structured_results_for_ui can be a DataFrame, tuple of DataFrames, or None.
+    structured_results_for_ui can be a DataFrame, tuple of Dataframes, or None.
     plot_buffer and plot_caption are for tests that generate plots (e.g., future tests).
     """
     results_str = ""
@@ -678,7 +678,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                             )
                             structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "ANOVA": # Updated to match dropdown string
+        elif test_type == "ANOVA":
             append_debug_log(f"DEBUG ANOVA: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(df[{col1}])={pd.api.types.is_numeric_dtype(df[col1])}")
             append_debug_log(f"DEBUG ANOVA: is_categorical_dtype(df[{col2}])={pd.api.types.is_categorical_dtype(df[col2])} | is_object_dtype(df[{col2}])={pd.api.types.is_object_dtype(df[col2])} | is_string_dtype(df[{col2}])={pd.api.types.is_string_dtype(df[col2])}")
@@ -745,7 +745,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = anova_df # Return the single DataFrame
 
-        elif test_type == "Independent T-test": # Updated to match dropdown string
+        elif test_type == "Independent T-test (Unpaired)": # UPDATED string to match dropdown
             append_debug_log(f"DEBUG Independent T-test: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Independent T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
@@ -792,7 +792,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                         # Store both dataframes in a tuple for structured_results_for_ui
                         structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "Chi-squared Test": # Updated to match dropdown string
+        elif test_type == "Chi-squared Test":
             append_debug_log(f"DEBUG Chi-squared: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Chi-squared: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not (pd.api.types.is_object_dtype(df[col1]) or pd.api.types.is_string_dtype(df[col1]) or pd.api.types.is_categorical_dtype(df[col1])):
@@ -820,7 +820,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = (observed_df, expected_df, chi2, p_value, dof) # Return tuple of DFs and key stats
 
-        elif test_type == "Paired T-test": # Updated to match dropdown string
+        elif test_type == "Paired T-test (Before vs After)": # UPDATED string to match dropdown
             append_debug_log(f"DEBUG Paired T-test: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Paired T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
@@ -864,7 +864,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "Pearson Correlation": # Updated to match dropdown string
+        elif test_type == "Pearson Correlation (Validity – Linear)": # UPDATED string to match dropdown
             append_debug_log(f"DEBUG Pearson Correlation: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Pearson Correlation: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
@@ -895,7 +895,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = corr_results_df
 
-        elif test_type == "Spearman Rank Correlation": # Updated to match dropdown string
+        elif test_type == "Spearman Rank Correlation (Validity – Monotonic)": # UPDATED string to match dropdown
             append_debug_log(f"DEBUG Spearman Correlation: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Spearman Correlation: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]): # Spearman can also use ordinal, but for simplicity, we'll stick to numerical selection
@@ -924,7 +924,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = spearman_results_df
 
-        elif test_type == "F-Test Two-Sample for Variances": # Updated to match dropdown string
+        elif test_type == "F-Test Two-Sample for Variances":
             append_debug_log(f"DEBUG F-Test for Variances: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG F-Test for Variances: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
@@ -974,7 +974,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = f_test_df
 
-        elif test_type == "T-test: Two-Sample Assuming Unequal Variances": # Updated to match dropdown string
+        elif test_type == "T-test: Two-Sample Assuming Unequal Variances":
             append_debug_log(f"DEBUG Unequal Variances T-test: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Unequal Variances T-test: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
@@ -1020,7 +1020,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                         )
                         structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "Shapiro-Wilk Test (Normality)": # Updated to match dropdown string
+        elif test_type == "Shapiro-Wilk Test (Normality)":
             append_debug_log(f"DEBUG Shapiro-Wilk Test: col1={col1}") # col1 here is actually stat_col_single
             append_debug_log(f"DEBUG Shapiro-Wilk Test: df[{col1}].dtype={df[col1].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]):
@@ -1314,17 +1314,17 @@ def main_app():
         st.sidebar.markdown("---")
         st.sidebar.header("Perform Statistical Tests")
 
-        # UPDATED: Added all new statistical test options
+        # UPDATED: Added all new statistical test options with clearer descriptions
         test_options = [
             "Select a test", 
-            "Cronbach’s Alpha (Reliability)", # NEW
-            "Z-Test (Two Sample Means)", # NEW
+            "Cronbach’s Alpha (Reliability)",
+            "Z-Test (Two Sample Means)", 
             "ANOVA", 
-            "Independent T-test", # Assumes Equal Variances
-            "Paired T-test", 
+            "Independent T-test (Unpaired)", # UPDATED
+            "Paired T-test (Before vs After)", # UPDATED
             "Chi-squared Test", 
-            "Pearson Correlation", 
-            "Spearman Rank Correlation",
+            "Pearson Correlation (Validity – Linear)", # UPDATED
+            "Spearman Rank Correlation (Validity – Monotonic)", # UPDATED
             "F-Test Two-Sample for Variances", 
             "T-test: Two-Sample Assuming Unequal Variances", 
             "Shapiro-Wilk Test (Normality)" 
@@ -1336,10 +1336,10 @@ def main_app():
         stat_cols_multiselect = None # For Cronbach's Alpha
 
         # Dynamic column selection based on selected test
-        if selected_test == "Cronbach’s Alpha (Reliability)": # NEW
+        if selected_test == "Cronbach’s Alpha (Reliability)":
             st.sidebar.info("Cronbach’s Alpha: Measures internal consistency of multiple numerical items (e.g., survey questions).")
             stat_cols_multiselect = st.sidebar.multiselect("Select Numerical Items (2+ columns):", numerical_columns, key="cronbach_cols")
-        elif selected_test == "Z-Test (Two Sample Means)": # NEW
+        elif selected_test == "Z-Test (Two Sample Means)":
             st.sidebar.info("Z-Test: Compares means of a numerical variable between 2 independent groups (large sample or known population SD).")
             stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="ztest_num_col")
             stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ztest_cat_col")
@@ -1347,24 +1347,24 @@ def main_app():
             st.sidebar.info("ANOVA: Compares means of a numerical variable across 2+ categories.")
             stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + numerical_columns, key="anova_num_col")
             stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + categorical_columns, key="anova_cat_col")
-        elif selected_test == "Independent T-test":
-            st.sidebar.info("T-test (Equal Variances): Compares means of a numerical variable between 2 groups.")
+        elif selected_test == "Independent T-test (Unpaired)": # UPDATED info
+            st.sidebar.info("Independent T-test: Compares means of a numerical variable between two *unpaired* groups (assumes equal variances).")
             stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="ttest_eq_num_col")
             stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ttest_eq_cat_col")
-        elif selected_test == "Paired T-test":
-            st.sidebar.info("Paired T-test: Compares means of two related numerical variables (e.g., before/after).")
+        elif selected_test == "Paired T-test (Before vs After)": # UPDATED info
+            st.sidebar.info("Paired T-test: Compares means of two *related* numerical variables (e.g., before/after measurements on the same subjects).")
             stat_col1 = st.sidebar.selectbox("Numerical Variable 1 (e.g., Before):", ["Select column"] + numerical_columns, key="paired_ttest_num1_col")
             stat_col2 = st.sidebar.selectbox("Numerical Variable 2 (e.g., After):", ["Select column"] + numerical_columns, key="paired_ttest_num2_col")
         elif selected_test == "Chi-squared Test":
             st.sidebar.info("Chi-squared: Tests association between two categorical variables.")
             stat_col1 = st.sidebar.selectbox("Categorical Variable 1:", ["Select column"] + categorical_columns, key="chi2_cat1_col")
             stat_col2 = st.sidebar.selectbox("Categorical Variable 2:", ["Select column"] + categorical_columns, key="chi2_cat2_col")
-        elif selected_test == "Pearson Correlation":
-            st.sidebar.info("Pearson Correlation: Measures linear relationship between two numerical variables.")
+        elif selected_test == "Pearson Correlation (Validity – Linear)": # UPDATED info
+            st.sidebar.info("Pearson Correlation: Measures the *linear* relationship between two numerical variables (for validity).")
             stat_col1 = st.sidebar.selectbox("Numerical Variable 1:", ["Select column"] + numerical_columns, key="pearson_num1_col")
             stat_col2 = st.sidebar.selectbox("Numerical Variable 2:", ["Select column"] + numerical_columns, key="pearson_num2_col")
-        elif selected_test == "Spearman Rank Correlation":
-            st.sidebar.info("Spearman Rank Correlation: Measures monotonic relationship between two numerical/ordinal variables.")
+        elif selected_test == "Spearman Rank Correlation (Validity – Monotonic)": # UPDATED info
+            st.sidebar.info("Spearman Rank Correlation: Measures the *monotonic* relationship between two numerical/ordinal variables (for validity).")
             stat_col1 = st.sidebar.selectbox("Numerical/Ordinal Variable 1:", ["Select column"] + numerical_columns, key="spearman_num1_col")
             stat_col2 = st.sidebar.selectbox("Numerical/Ordinal Variable 2:", ["Select column"] + numerical_columns, key="spearman_num2_col")
         elif selected_test == "F-Test Two-Sample for Variances":
@@ -1377,7 +1377,7 @@ def main_app():
             stat_col2 = st.sidebar.selectbox("Grouping Variable (2 categories):", ["Select column"] + categorical_columns, key="ttest_uneq_cat_col")
         elif selected_test == "Shapiro-Wilk Test (Normality)":
             st.sidebar.info("Shapiro-Wilk Test: Tests if a numerical variable is normally distributed.")
-            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="shapiro_num_col") # Renamed from stat_col_single to stat_col1 for consistency
+            stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="shapiro_num_col")
         
         if st.sidebar.button(f"Run {selected_test}"):
             append_debug_log(f"DEBUG: Button '{selected_test}' clicked.")
@@ -1388,7 +1388,7 @@ def main_app():
             if selected_test == "Select a test":
                 st.sidebar.warning("Please select a statistical test to run.")
                 is_valid_selection = False
-            elif selected_test == "Cronbach’s Alpha (Reliability)": # NEW validation for multi-select
+            elif selected_test == "Cronbach’s Alpha (Reliability)":
                 if not stat_cols_multiselect or len(stat_cols_multiselect) < 2:
                     st.sidebar.warning("Please select at least two numerical columns for Cronbach’s Alpha.")
                     is_valid_selection = False
@@ -1399,9 +1399,9 @@ def main_app():
                 if stat_col1 == "Select column":
                     st.sidebar.warning("Please select a numerical variable for the Shapiro-Wilk Test.")
                     is_valid_selection = False
-            elif selected_test in ["ANOVA", "Independent T-test", "Paired T-test", "Chi-squared Test",
-                                   "Pearson Correlation", "Spearman Rank Correlation",
-                                   "F-Test Two-Sample for Variances", "T-test: Two-Sample Assuming Unequal Variances", "Z-Test (Two Sample Means)"]: # Added Z-Test here
+            elif selected_test in ["ANOVA", "Independent T-test (Unpaired)", "Paired T-test (Before vs After)", "Chi-squared Test", # UPDATED names here
+                                   "Pearson Correlation (Validity – Linear)", "Spearman Rank Correlation (Validity – Monotonic)", # UPDATED names here
+                                   "F-Test Two-Sample for Variances", "T-test: Two-Sample Assuming Unequal Variances", "Z-Test (Two Sample Means)"]:
                 if stat_col1 == "Select column" or stat_col2 == "Select column":
                     st.sidebar.warning("Please select all required columns for the chosen test.")
                     is_valid_selection = False
@@ -1427,7 +1427,7 @@ def main_app():
                         st.session_state.report_content.append({"type": "text", "content": test_results_str})
 
                         # Display structured results in UI and add to report based on test type
-                        if selected_test in ["Independent T-test", "Paired T-test", "Z-Test (Two Sample Means)", "T-test: Two-Sample Assuming Unequal Variances"] and structured_results_for_ui is not None:
+                        if selected_test in ["Independent T-test (Unpaired)", "Paired T-test (Before vs After)", "Z-Test (Two Sample Means)", "T-test: Two-Sample Assuming Unequal Variances"] and structured_results_for_ui is not None: # UPDATED names here
                             group_stats_df, test_stats_df = structured_results_for_ui # Unpack the tuple
                             
                             st.session_state.messages.append({"role": "dataframe", "title": "Group Statistics", "content": group_stats_df})
@@ -1441,8 +1441,8 @@ def main_app():
                             st.session_state.messages.append({"role": "dataframe", "title": "ANOVA Summary Table", "content": anova_df})
                             st.session_state.report_content.append({"type": "stat_table", "title": "ANOVA Summary Table", "dataframe": anova_df})
 
-                        elif selected_test in ["Pearson Correlation", "Spearman Rank Correlation", "F-Test Two-Sample for Variances", 
-                                               "Shapiro-Wilk Test (Normality)", "Cronbach’s Alpha (Reliability)"] and structured_results_for_ui is not None: # UPDATED for Cronbach's
+                        elif selected_test in ["Pearson Correlation (Validity – Linear)", "Spearman Rank Correlation (Validity – Monotonic)", "F-Test Two-Sample for Variances", # UPDATED names here
+                                               "Shapiro-Wilk Test (Normality)", "Cronbach’s Alpha (Reliability)"] and structured_results_for_ui is not None:
                             # These tests return a single DataFrame
                             single_table_df = structured_results_for_ui
                             table_title = f"{selected_test} Results"
