@@ -864,7 +864,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     )
                     structured_results_for_ui = (group_stats_df, test_results_df)
 
-        elif test_type == "pearson_correlation":
+        elif test_type == "pearson_correlation (Validity-Linear)":
             append_debug_log(f"DEBUG Pearson Correlation: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG Pearson Correlation: df[{col1}].dtype={df[col1].dtype}, df[{col2}].dtype={df[col2].dtype}")
             if not pd.api.types.is_numeric_dtype(df[col1]) or not pd.api.types.is_numeric_dtype(df[col2]):
