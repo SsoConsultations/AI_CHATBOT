@@ -1,3 +1,11 @@
+# ✅ Final Updated app.py with integrated tests
+# Includes:
+# - Cronbach’s Alpha (Reliability)
+# - Z-Test (Two Sample Means)
+# - Simple Linear Regression (AI interpreted + plot)
+# - AI interpretation + Report generation
+# - All original code logic preserved from app (51).py
+
 import streamlit as st
 import pandas as pd
 import io
