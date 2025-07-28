@@ -5,3 +5,5 @@ python-docx
 matplotlib
 seaborn
 scipy
+pingouin
+statsmodels
