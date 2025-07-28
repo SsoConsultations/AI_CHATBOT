@@ -1323,8 +1323,8 @@ def main_app():
             "Independent T-test", # Assumes Equal Variances
             "Paired T-test", 
             "Chi-squared Test", 
-            "Pearson Correlation", 
-            "Spearman Rank Correlation",
+            "Pearson Correlation(Validity-Linear)", 
+            "Spearman Rank Correlation(Validity – Monotonic)",
             "F-Test Two-Sample for Variances", 
             "T-test: Two-Sample Assuming Unequal Variances", 
             "Shapiro-Wilk Test (Normality)" 
