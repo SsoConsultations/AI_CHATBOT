@@ -601,10 +601,8 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     error_message = "Cronbach’s Alpha: Not enough valid data points after dropping NaNs (requires at least 2 rows)."
                 
                 if not error_message:
-                    # Removed return_N as it might not be supported by all pingouin versions
-                    alpha_series = pg.cronbach_alpha(data=numeric_cols_data)
-                    # Safely extract the scalar alpha value from the Series
-                    alpha = alpha_series.loc['Alpha'] if 'Alpha' in alpha_series.index else float(alpha_series) # Fallback to float cast if not a Series
+                    # Directly assign the scalar alpha value returned by pingouin.cronbach_alpha()
+                    alpha = pg.cronbach_alpha(data=numeric_cols_data) 
 
                     n_items = len(selected_columns) # Get number of items from selected columns directly
 
@@ -1559,7 +1557,7 @@ def main_app():
             if "my goal is" in prompt_lower or "i want to do" in prompt_lower or "my objective is" in prompt_lower:
                 st.session_state['user_goal'] = prompt # Simple capture for now
                 st.session_state.report_content.append({"type": "heading", "level": 2, "content": "User's Stated Goal"})
-                st.session_state.report.content.append({"type": "text", "content": prompt})
+                st.session_state.report_content.append({"type": "text", "content": prompt})
 
             # Construct prompt for OpenAI, including data summary and full chat history
             full_prompt = (
@@ -1574,7 +1572,7 @@ def main_app():
             with st.spinner("Generating response..."):
                 response = generate_openai_response(full_prompt)
                 st.session_state.messages.append({"role": "assistant", "content": response})
-                st.session_state.report.content.append({"type": "text", "content": response}) # Log AI responses for report
+                st.session_state.report_content.append({"type": "text", "content": response}) # Log AI responses for report
             st.rerun() # Rerun to display the new message/graph
 
     st.sidebar.markdown("---")
