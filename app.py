@@ -601,7 +601,9 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                     error_message = "Cronbach’s Alpha: Not enough valid data points after dropping NaNs (requires at least 2 rows)."
                 
                 if not error_message:
-                    alpha, n_items = pg.cronbach_alpha(data=numeric_cols_data, return_N=True)
+                    # Removed return_N as it might not be supported by all pingouin versions
+                    alpha = pg.cronbach_alpha(data=numeric_cols_data)
+                    n_items = len(selected_columns) # Get number of items from selected columns directly
 
                     results_df = pd.DataFrame({
                         "Metric": ["Alpha Value", "Number of Items"],
