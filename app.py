@@ -680,72 +680,78 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                                 "Interpretation will be provided by the AI."
                             )
                             structured_results_for_ui = (group_stats_df, test_results_df)
-    
-        elif test_type == "ANOVA":
-            append_debug_log(f"DEBUG ANOVA: col1={col1}, col2={col2}")
-            append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(df[{col1}])={pd.api.types.is_numeric_dtype(df[col1])}")
-    
-                # Split multiple independent variables by comma
-            independent_vars = [v.strip() for v in col2.split(',') if v.strip()]
-            append_debug_log(f"DEBUG ANOVA: independent_vars={independent_vars}")
-    
-            if not pd.api.types.is_numeric_dtype(df[col1]):
-                 error_message = f"ANOVA: Dependent variable '{col1}' must be numerical."
-            elif any(not (pd.api.types.is_object_dtype(df[var]) or pd.api.types.is_string_dtype(df[var]) or pd.api.types.is_categorical_dtype(df[var])) for var in independent_vars):
-                error_message = f"ANOVA: All independent variables must be categorical."
-            else:
-                    # Drop NaNs for all relevant columns
-                clean_df = df[[col1] + independent_vars].dropna()
-    
-                    # Create combined grouping variable
-                clean_df['combined_group'] = clean_df[independent_vars].astype(str).agg('_'.join, axis=1)
-    
-                groups = [clean_df[col1][clean_df['combined_group'] == g] for g in clean_df['combined_group'].unique()]
-                append_debug_log(f"DEBUG ANOVA: unique_groups={clean_df['combined_group'].unique()}, len(groups)={len(groups)}")
-    
-                if len(groups) < 2:
-                    error_message = f"ANOVA: Combined independent variables need at least 2 distinct groups."
-                elif any(len(g) == 0 for g in groups):
-                    error_message = f"ANOVA: Some groups have no data for '{col1}' after dropping NaNs."
-                else:
-                    # Perform ANOVA using scipy
-                    f_statistic_scipy, p_value_scipy = stats.f_oneway(*groups)
-    
-                    grand_mean = clean_df[col1].mean()
-                    sst = np.sum((clean_df[col1] - grand_mean)**2)
-                    df_total = len(clean_df) - 1
-    
-                    ssb = 0
-                    for g in clean_df['combined_group'].unique():
-                        group_data = clean_df[col1][clean_df['combined_group'] == g]
-                        ssb += len(group_data) * (group_data.mean() - grand_mean)**2
-                    df_between = len(clean_df['combined_group'].unique()) - 1
-    
-                    ssw = np.sum((clean_df[col1] - clean_df.groupby('combined_group')[col1].transform('mean'))**2)
-                    df_within = len(clean_df) - len(clean_df['combined_group'].unique())
-    
-                    msb = ssb / df_between if df_between > 0 else np.nan
-                    msw = ssw / df_within if df_within > 0 else np.nan
-                    f_stat_calculated = msb / msw if msw > 0 else np.nan
-    
-                    anova_summary_data = {
-                        'Source of Variation': ['Between Groups', 'Within Groups', 'Total'],
-                        'Sum of Squares (SS)': [ssb, ssw, sst],
-                        'df': [df_between, df_within, df_total],
-                        'Mean Squares (MS)': [msb, msw, np.nan],
-                        'F': [f_stat_calculated, np.nan, np.nan],
-                        'P-value': [p_value_scipy, np.nan, np.nan]
-                    }
-                    anova_df = pd.DataFrame(anova_summary_data)
-    
-                    results_str = (
-                        f"ANOVA Test Results for '{col1}' by {', '.join(independent_vars)}:\n"
-                        f"  F-statistic: {f_statistic_scipy:.4f}\n"
-                        f"  P-value: {p_value_scipy:.4f}\n"
-                        "Interpretation will be provided by the AI."
-                    )
-                    structured_results_for_ui = anova_df
-
+                            elif test_type == "ANOVA":
+                                append_debug_log(f"DEBUG ANOVA: col1={col1}, col2={col2}")
+                                append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(df[{col1}])={pd.api.types.is_numeric_dtype(df[col1])}")
+                            
+                                # Support multiple independent variables: if UI gives a list use it, else convert single to list
+                                if isinstance(col2, list):
+                                    independent_vars = [v for v in col2 if str(v).strip()]
+                                elif isinstance(col2, str):
+                                    # Backward compatibility: allow comma-separated input
+                                    independent_vars = [v.strip() for v in col2.split(',') if v.strip()]
+                                else:
+                                    independent_vars = []
+                                append_debug_log(f"DEBUG ANOVA: independent_vars={independent_vars}")
+                            
+                                if not pd.api.types.is_numeric_dtype(df[col1]):
+                                    error_message = f"ANOVA: Dependent variable '{col1}' must be numerical."
+                                elif not independent_vars:
+                                    error_message = "ANOVA: Please select at least one categorical independent variable."
+                                elif any(not (pd.api.types.is_object_dtype(df[var]) or pd.api.types.is_string_dtype(df[var]) or pd.api.types.is_categorical_dtype(df[var])) for var in independent_vars):
+                                    error_message = "ANOVA: All independent variables must be categorical."
+                                else:
+                                    # Drop NaNs for all relevant columns
+                                    clean_df = df[[col1] + independent_vars].dropna()
+                            
+                                    # Create combined grouping variable from multiple categorical columns
+                                    clean_df['__combined_group__'] = clean_df[independent_vars].astype(str).agg('_'.join, axis=1)
+                            
+                                    groups = [clean_df[col1][clean_df['__combined_group__'] == g] for g in clean_df['__combined_group__'].unique()]
+                                    append_debug_log(f"DEBUG ANOVA: unique_groups={clean_df['__combined_group__'].unique()}, len(groups)={len(groups)}")
+                            
+                                    if len(groups) < 2:
+                                        error_message = "ANOVA: Combined independent variables need at least 2 distinct groups."
+                                    elif any(len(g) == 0 for g in groups):
+                                        error_message = f"ANOVA: Some groups have no data for '{col1}' after dropping NaNs."
+                                    else:
+                                        # Perform ANOVA using scipy
+                                        f_statistic_scipy, p_value_scipy = stats.f_oneway(*groups)
+                            
+                                        grand_mean = clean_df[col1].mean()
+                                        sst = np.sum((clean_df[col1] - grand_mean)**2)
+                                        df_total = len(clean_df) - 1
+                            
+                                        ssb = 0
+                                        for g in clean_df['__combined_group__'].unique():
+                                            group_data = clean_df[col1][clean_df['__combined_group__'] == g]
+                                            ssb += len(group_data) * (group_data.mean() - grand_mean)**2
+                                        df_between = len(clean_df['__combined_group__'].unique()) - 1
+                            
+                                        ssw = np.sum((clean_df[col1] - clean_df.groupby('__combined_group__')[col1].transform('mean'))**2)
+                                        df_within = len(clean_df) - len(clean_df['__combined_group__'].unique())
+                            
+                                        msb = ssb / df_between if df_between > 0 else np.nan
+                                        msw = ssw / df_within if df_within > 0 else np.nan
+                                        f_stat_calculated = msb / msw if msw > 0 else np.nan
+                            
+                                        anova_summary_data = {
+                                            'Source of Variation': ['Between Groups', 'Within Groups', 'Total'],
+                                            'Sum of Squares (SS)': [ssb, ssw, sst],
+                                            'df': [df_between, df_within, df_total],
+                                            'Mean Squares (MS)': [msb, msw, np.nan],
+                                            'F': [f_stat_calculated, np.nan, np.nan],
+                                            'P-value': [p_value_scipy, np.nan, np.nan]
+                                        }
+                                        anova_df = pd.DataFrame(anova_summary_data)
+                            
+                                        results_str = (
+                                            f"ANOVA Test Results for '{col1}' by {', '.join(independent_vars)}:\n"
+                                            f"  F-statistic: {f_statistic_scipy:.4f}\n"
+                                            f"  P-value: {p_value_scipy:.4f}\n"
+                                            "Interpretation will be provided by the AI."
+                                        )
+                                        structured_results_for_ui = anova_df
 
         elif test_type == "Independent T-test (Unpaired)": # UPDATED string to match dropdown
             append_debug_log(f"DEBUG Independent T-test: col1={col1}, col2={col2}")
@@ -1348,7 +1354,7 @@ def main_app():
         elif selected_test == "ANOVA":
             st.sidebar.info("ANOVA: Compares means of a numerical variable across 2+ categories.")
             stat_col1 = st.sidebar.selectbox("Numerical Variable (Dependent):", ["Select column"] + numerical_columns, key="anova_num_col")
-            stat_col2 = st.sidebar.selectbox("Categorical Variable (Independent):", ["Select column"] + categorical_columns, key="anova_cat_col")
+            stat_col2 = st.sidebar.multiselect("Categorical Variable(s):", categorical_columns, key="anova_cat_cols")
         elif selected_test == "Independent T-test (Unpaired)": # UPDATED info
             st.sidebar.info("Independent T-test: Compares means of a numerical variable between two *unpaired* groups (assumes equal variances).")
             stat_col1 = st.sidebar.selectbox("Numerical Variable:", ["Select column"] + numerical_columns, key="ttest_eq_num_col")
