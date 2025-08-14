@@ -681,7 +681,7 @@ def perform_statistical_test(df, test_type, col1=None, col2=None):
                             )
                             structured_results_for_ui = (group_stats_df, test_results_df)
 
-                elif test_type == "ANOVA":
+            elif test_type == "ANOVA":
             append_debug_log(f"DEBUG ANOVA: col1={col1}, col2={col2}")
             append_debug_log(f"DEBUG ANOVA: is_numeric_dtype(df[{col1}])={pd.api.types.is_numeric_dtype(df[col1])}")
 
